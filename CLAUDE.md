@@ -14,8 +14,8 @@ people at once. Drag it to the left and it moves left on her screen too, as if
 an invisible hand picked it up. Which is what happened: your hand. Every design
 question resolves toward preserving that illusion.
 
-**Status:** specification only. No code has been written. Do not start building
-until the user explicitly says so.
+**Status:** spec complete, demo phase. The user wants a rough working demo
+before the real build — see **Working mode: demo first**.
 
 ---
 
@@ -407,6 +407,37 @@ observers, and anyone who steals a machine while the app is closed.
 Explicitly **not** defended against: someone with access to an unlocked Mac
 running the app — they can read the current window and send as you. That's the
 same as any messenger and is not worth engineering around.
+
+---
+
+## Working mode: demo first
+
+**Build a rough working demo before anything polished.** The user wants to see
+how it *works*, not how it looks. Looks are explicitly not a concern yet.
+
+Prove the parts that are genuinely uncertain:
+
+- Does a floating panel behave over fullscreen apps and across Spaces?
+- Does click-through with dwell-to-solidify feel right, or fight the cursor?
+- Does mirrored movement actually read as *one shared pet* rather than two
+  synced ones? This is the whole product thesis and it is unproven.
+- Can two instances on one Mac be made to pair and talk?
+
+Skip what is well-understood or invisible in a demo: encryption, notarization,
+real art, exact expiry timing, error handling, settings UI.
+
+### Ask in flight, don't gather up front
+
+The user prefers answering questions as they arise mid-build over being blocked
+by a long list beforehand. When a decision comes up while implementing, ask it
+then and keep moving. Do not stall the build to assemble a questionnaire.
+
+### The demo is disposable
+
+Demo code exists to answer questions, then be thrown away. Do not let it harden
+into the real app by accident — no clever abstractions, no premature structure.
+When the demo has taught us what it can, the phased build order below is what
+actually gets built.
 
 ---
 
