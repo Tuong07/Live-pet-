@@ -14,8 +14,12 @@ people at once. Drag it to the left and it moves left on her screen too, as if
 an invisible hand picked it up. Which is what happened: your hand. Every design
 question resolves toward preserving that illusion.
 
-**Status:** spec complete, demo phase. The user wants a rough working demo
-before the real build — see **Working mode: demo first**.
+**Status:** spec complete. No code has been written.
+
+**Do not write code until the user explicitly says to start.** Discussing scope,
+agreeing an approach, or being asked "any more questions?" is **not**
+authorization. The user says when building begins, in plain words. Ask if
+unsure.
 
 ---
 
@@ -426,11 +430,36 @@ Prove the parts that are genuinely uncertain:
 Skip what is well-understood or invisible in a demo: encryption, notarization,
 real art, exact expiry timing, error handling, settings UI.
 
+### Building requires explicit permission
+
+Settling what the demo should contain is planning, not a green light. Wait for
+the user to say start. This has already been misread once — a scope answer was
+taken as authorization. When in doubt, ask; the cost of asking is one sentence,
+the cost of guessing is unwanted code in the repo.
+
+Once building **is** authorized, the rule below applies.
+
 ### Ask in flight, don't gather up front
 
 The user prefers answering questions as they arise mid-build over being blocked
 by a long list beforehand. When a decision comes up while implementing, ask it
 then and keep moving. Do not stall the build to assemble a questionnaire.
+
+### Agreed demo scope — window only
+
+Decided, **awaiting authorization to build**. One instance, no networking:
+
+- Borderless non-activating `NSPanel`, floating above fullscreen apps, on every
+  Space, main display only.
+- Blank circle placeholder for the pet.
+- Click-through when idle; dwell-to-solidify on cursor hover.
+- Draggable, position persisted as relative coordinates, survives restart.
+- Composer opens on click; action row beneath it.
+- Menu bar item with Quit. No Dock icon.
+- Profile namespacing (`--profile`) and the dev position offset.
+
+Deliberately excluded: relay, pairing, encryption, mirroring, real art. Those
+come once the window behaviour is proven.
 
 ### The demo is disposable
 
@@ -511,6 +540,9 @@ Tests/                   Swift Testing — crypto, expiry, state machine
 ```
 
 ## Working in this repo
+
+Verified on this machine: Swift 6.3.3, macOS 26.5.2, Xcode command line tools
+present at `/Applications/Xcode.app`.
 
 - `xcodegen generate` after touching `project.yml` or adding files.
 - `xcodebuild -scheme LivePet build` to build from the CLI.
