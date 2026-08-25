@@ -100,6 +100,16 @@ This works only *because* delivery is presence-gated. The two decisions are
 load-bearing on each other — you cannot relax "no queueing" without introducing
 storage, and storage is the thing the product exists to avoid.
 
+### Pairing is permanent in v1
+
+**Decided: no unpairing.** There is no in-app way to break a bond. Re-pairing
+means clearing the stored key by hand or reinstalling.
+
+Known consequence for public release: someone who pairs with the wrong person,
+or mistypes into a stranger's key, is stuck with no obvious way out. A local
+"Reset pairing" menu item that clears the Keychain would cost almost nothing and
+is the obvious escape hatch — **revisit at phase 6, not before.**
+
 ### Pairing key
 
 Format: **16 Crockford base32 characters, shown in four groups of four** —
@@ -432,13 +442,19 @@ restarts, and none of them are message data:
 
 This is a clarification of the rule, not drift from it. Nothing else persists.
 
-### Forward secrecy
+### Forward secrecy — deliberately not in v1
 
-v1 derives one long-term key from the pairing key. If ciphertext were recorded
-over time and the key later stolen, all of it would be readable. The fix is an
-X25519 handshake per connection so each session gets a throwaway key — roughly
-30 extra lines with CryptoKit. Little to protect given nothing is stored, but
-cheap. **Open decision at phase 2; recommendation is to do it.**
+**Decided: skip it.** v1 derives one long-term key from the pairing key.
+
+The consequence, stated plainly so nobody rediscovers it as a surprise: if
+ciphertext were recorded over time and the pairing key later stolen, all of it
+would be readable. Nothing is stored anywhere, so there is little sitting around
+to protect, which is what makes this defensible.
+
+The fix, if it is ever wanted, is an X25519 handshake per connection so each
+session gets a throwaway key — roughly 30 extra lines with CryptoKit. Adding it
+later changes the wire protocol, so it needs a version bump and both sides
+updating. Do not add it unprompted.
 
 ### Threat model
 
@@ -562,6 +578,16 @@ actually gets built.
 
 **There is no macOS simulator.** The Mac is the target hardware; the app runs
 natively. The real problem is that this is a two-machine app.
+
+**There is no second Mac.** Everything is built and tested as two instances on
+one machine. A macOS VM at a different resolution covers the screen-size case,
+which is the whole reason relative coordinates exist. Real network conditions —
+wifi drops, sleep/wake reconnects — stay untested until release; say so rather
+than implying otherwise.
+
+**The relay runs on localhost** until two pets actually mirror. No hosting
+decision, no deployment, no pricing research until the protocol has stopped
+moving.
 
 ### Primary loop: two instances on one Mac
 
@@ -774,13 +800,6 @@ never showing a keystroke-observation prompt holds.
   Worth knowing if this is revisited: a panel hanging off the bottom of the
   screen gets dragged back by AppKit with an *animated* `setFrame`, which never
   consults `constrainFrameRect`. The window itself has to stay on screen.
-
-### Needed for phase 2
-
-- **Unpairing** — can a pairing be broken and restarted, and does it need both
-  sides to agree? Matters much more for public release than for one pair.
-- **Forward secrecy** — add the per-connection X25519 handshake? Recommendation
-  is yes.
 
 ### Needed for phase 3
 
