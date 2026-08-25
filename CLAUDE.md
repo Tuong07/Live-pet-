@@ -14,8 +14,9 @@ people at once. Drag it to the left and it moves left on her screen too, as if
 an invisible hand picked it up. Which is what happened: your hand. Every design
 question resolves toward preserving that illusion.
 
-**Status:** spec complete. Window-behaviour demo built in `demo/` — see
-**Demo status**. No production code yet.
+**Status:** phase 1 proven by the demo in `demo/` — see **Demo status**.
+**Phase 2 is specified and unblocked; nothing is built yet.** No production code
+exists; the demo is disposable and is not the app.
 
 **Do not write code until the user explicitly says to start.** Discussing scope,
 agreeing an approach, or being asked "any more questions?" is **not**
@@ -752,12 +753,14 @@ not a code change.
 
 Each phase produces something runnable, so the user can feel it and redirect.
 
-1. **A cat on the screen** — floating blank circle on the main display, above
-   fullscreen apps and on every Space. Click-through with dwell-to-solidify.
-   Draggable, remembers position, survives restarts. Menu bar item with Quit.
-   Profile namespacing and the dev offset. No networking.
-2. **Two cats, one wire** — relay, pairing keys, encryption, presence. Text
-   lands on the other machine. Ugly but real.
+1. **A cat on the screen** — ✅ **proven in the demo.** Floating blank circle on
+   the main display, above fullscreen apps and on every Space. Click-through
+   with dwell-to-solidify. Hover to open, click to pin, linger to collapse.
+   Draggable pinned to the cursor, remembers position, survives restarts. Menu
+   bar item with Quit. Profile namespacing and the dev offset. No networking.
+   Still demo code — phase 2 is where the real target begins.
+2. **Two cats, one wire** — ⬅ **next.** Relay, pairing keys, encryption,
+   presence. Text lands on the other machine. Ugly but real.
 3. **The conversation** — the thinking cloud with its growth cap and scrolling,
    the composer, 30-minute rolling window, unread handling, hotkey, away state.
 4. **Affection** — the action row (pet, sleep, move), emoji, sound, reaction
@@ -766,6 +769,36 @@ Each phase produces something runnable, so the user can feel it and redirect.
    pairing flow.
 6. **Release** — signing, notarization, landing page, multiple mascots,
    privacy policy.
+
+### Phase 2 in order
+
+Specified, decided, and awaiting the word to start. Build in this sequence —
+each step is testable before the next exists.
+
+1. **Relay** (`relay/`, ~150 lines TypeScript). Rooms held in memory, two
+   sockets per room, `room_full` on a third, rate limiting, forwards `msg`
+   frames byte-for-byte without parsing `c`. No database, no disk writes, and
+   no logging of room IDs. Runs on `localhost:8080`.
+2. **Key derivation and crypto** (`Crypto/`). Generate 80 bits, render as
+   Crockford base32, derive `room_id` and `msg_key` by HKDF, seal and open with
+   a fresh random 96-bit nonce per message. Unit-testable with no UI and no
+   network — do this before either.
+3. **Scripted peer** (~40 lines of Node beside the relay). Speaks the protocol
+   as the other side. Build it here, not later: it makes flooding the cloud,
+   dropping mid-drag and waiting out expiry trivial to test.
+4. **Connection and presence** (`Net/`). `hello` → `ready` → `peer`, the four
+   states, `ping` every 20s, two missed `pong`s means dead, reconnect with
+   exponential backoff capped ~30s. Cat wakes and dozes off the `peer` frame.
+5. **Pairing UI** (`App/`). First-run screen: generated key, entry field, "what
+   should I call them?". Key and nickname to the Keychain. Relay URL override
+   for development.
+6. **Mirroring** (`Pet/`). Actions cross first — simplest, most satisfying.
+   Then `move` on drop with relative coordinates and a smooth animation on the
+   far side. Then `state` reconciliation on entering `live`, newest `pos_ts`
+   wins.
+
+Verified throughout as two instances on one Mac against the local relay, using
+the existing `--profile` namespacing and dev offset.
 
 Post-MVP: the cat comes alive — wandering, napping, reacting to your typing,
 appearing in the corner when you've been heads-down too long.
