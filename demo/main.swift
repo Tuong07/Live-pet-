@@ -32,11 +32,17 @@ enum L {
     static let pet: CGFloat = 72
     static let gap: CGFloat = 10
     static let bottom: CGFloat = 210
-    static let dwell: TimeInterval = 0.2
-    /// Cloud is capped at a third of the screen, per spec.
+    static let dwell: TimeInterval = 0.2      // show the assembly
+    static let focusDwell: TimeInterval = 0.6 // and only then take the keyboard
+    static let linger: TimeInterval = 0.5     // countdown after the cursor leaves
+    static let line: CGFloat = 18             // one line of text
+    /// A third of the screen, less two lines so the top does not sit flat
+    /// against the panel edge.
     static func cloudCap(_ screen: NSScreen) -> CGFloat {
-        min(260, screen.frame.height / 3)
+        min(260, screen.frame.height / 3) - 2 * line
     }
+    /// Space the composer and action row need beneath the pet.
+    static let stackBelow: CGFloat = pet / 2 + gap + bottom
 }
 
 // MARK: - Model
@@ -68,7 +74,8 @@ struct PetAction: Identifiable {
 }
 
 @MainActor final class PetState: ObservableObject {
-    @Published var composerOpen = false
+    /// Raised when the composer should take the keyboard.
+    @Published var focusRequested = false
     @Published var draft = ""
     @Published var messages: [Msg] = []
     @Published var mood: Mood = .idle
@@ -77,12 +84,16 @@ struct PetAction: Identifiable {
     @Published var dragging = false
     /// The cloud and composer collapse together; messages stay alive underneath.
     @Published var expanded = false
+    /// A click pins the assembly open; hovering alone does not.
+    @Published var pinned = false
+    /// Ticked once a second so ageing bubbles redraw.
+    @Published var now = Date()
 
     /// The pet accepts clicks when it is hovered, open, dragged, or wants
     /// attention. `dragging` is load-bearing: without it a fast drag outruns
     /// the window, the cursor leaves the pet, click-through switches back on
     /// mid-drag and the pet stops receiving the events moving it.
-    var solid: Bool { hovering || composerOpen || unread || dragging }
+    var solid: Bool { hovering || expanded || unread || dragging }
 
     var showsCloud: Bool { expanded && !messages.isEmpty }
 
@@ -93,17 +104,25 @@ struct PetAction: Identifiable {
         draft = ""                      // composer stays open, per spec
     }
 
+    /// Opening always reads the pip, however it was opened.
+    func expand() {
+        expanded = true
+        unread = false
+    }
+
     func collapse() {
         Trace.write("collapse msgs=\(messages.count)")
+        pinned = false
         expanded = false
-        composerOpen = false
+        focusRequested = false
         draft = ""
     }
 
+    /// An arriving message shows a pip on the pet. It deliberately does **not**
+    /// pop the cloud open — that is unwelcome mid-meeting or mid-screenshare.
     func receive(_ text: String) {
         messages.append(Msg(text: text, mine: false))
-        if !composerOpen { unread = true }
-        expanded = true                 // an arriving message shows itself
+        if !expanded { unread = true }
         flash(.petted)
     }
 
@@ -115,7 +134,14 @@ struct PetAction: Identifiable {
         }
     }
 
+    /// 1 while fresh, falling towards 0 as the message approaches expiry.
+    func life(_ m: Msg, _ ttl: TimeInterval) -> Double {
+        let age = now.timeIntervalSince(m.born)
+        return max(0, min(1, 1 - age / ttl))
+    }
+
     func expire(_ ttl: TimeInterval) {
+        now = Date()
         let cutoff = Date().addingTimeInterval(-ttl)
         let before = messages.count
         messages.removeAll { $0.born < cutoff }
@@ -128,6 +154,15 @@ struct PetAction: Identifiable {
 final class PetPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// AppKit keeps windows on screen by rewriting their frame, which silently
+    /// undoes positioning near an edge — the pet would jump back towards the
+    /// middle after being placed at the bottom. The assembly is mostly
+    /// transparent and clamps its own visible parts, so opt out entirely.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
 }
 
 /// The spec says the pet lives on the **main display**. `NSScreen.main` is the
@@ -189,15 +224,10 @@ final class PetPanel: NSPanel {
             Trace.write("move cursor=\(Int(m.x)),\(Int(m.y)) pet=\(Int(petCenter.x)),\(Int(petCenter.y))")
         }
         let f = primaryScreen().frame
-        // Spec: clamp so the assembly stays on screen, not just the pet.
-        // Horizontally the full panel width is kept on screen, so the cloud and
-        // composer never hang off the edge.
         let halfW = L.width / 2
-        // Vertically the pet and everything below it (composer + action row)
-        // must fit. The cloud is capped and only present when there are live
-        // messages, so it is allowed to clip rather than creating a large dead
-        // zone at the bottom of the screen where the pet cannot go.
-        let below = L.pet / 2 + L.gap + L.bottom
+        // The composer and action row need room beneath the pet, so the pet
+        // cannot sit right against the bottom edge.
+        let below = L.stackBelow
         let above = L.pet / 2 + 4
         let x = min(max(p.x, f.minX + halfW), f.maxX - halfW)
         let y = min(max(p.y, f.minY + below), f.maxY - above)
@@ -214,6 +244,7 @@ final class PetPanel: NSPanel {
     }
 
     func restore(offset: CGFloat) {
+
         let screen = primaryScreen()
         let f = screen.frame
         let fx = defaults.object(forKey: "fx") as? Double ?? 0.86
@@ -222,9 +253,22 @@ final class PetPanel: NSPanel {
                              y: f.minY + CGFloat(fy) * f.height))
     }
 
-    func hit(_ mouse: CGPoint) -> Bool {
+    func hitPet(_ mouse: CGPoint) -> Bool {
         let c = petCenter
-        return hypot(mouse.x - c.x, mouse.y - c.y) <= L.pet / 2 + 4
+        return hypot(mouse.x - c.x, mouse.y - c.y) <= L.pet / 2 + 6
+    }
+
+    /// While the assembly is open the cursor must be able to travel from the pet
+    /// to the composer without counting as "left". Anything inside the panel's
+    /// visible column counts.
+    func hitAssembly(_ mouse: CGPoint, expanded: Bool) -> Bool {
+        if hitPet(mouse) { return true }
+        guard expanded else { return false }
+        let c = petCenter
+        let x = abs(mouse.x - c.x) <= L.width / 2
+        let reach = L.gap + L.bottom
+        let y = mouse.y <= c.y + cloudCap + L.gap && mouse.y >= c.y - reach
+        return x && y
     }
 }
 
@@ -232,6 +276,7 @@ final class PetPanel: NSPanel {
 
 struct Bubble: View {
     let msg: Msg
+    var life: Double = 1
     var body: some View {
         HStack {
             if msg.mine { Spacer(minLength: 24) }
@@ -246,20 +291,23 @@ struct Bubble: View {
                                        : Color.primary.opacity(0.11)))
             if !msg.mine { Spacer(minLength: 24) }
         }
+        // Fades across its thirty minutes, so expiry reads as deliberate.
+        .opacity(0.35 + 0.65 * life)
     }
 }
 
 struct Cloud: View {
     let messages: [Msg]
     let cap: CGFloat
+    let life: (Msg) -> Double
 
-    /// One definition, used both as the plain stack and as the scroller's
-    /// content, so the two can never drift apart.
     private var stack: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(messages) { Bubble(msg: $0).id($0.id) }
+            ForEach(messages) { Bubble(msg: $0, life: life($0)).id($0.id) }
         }
-        .padding(10)
+        // Equal top and bottom, so the two edges read the same.
+        .padding(.vertical, 12)
+        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -269,13 +317,9 @@ struct Cloud: View {
             if !messages.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     // Hug the content until it reaches the cap, then scroll.
-                    // The cap belongs on the scrolling branch, not the
-                    // container: `.frame(maxHeight:)` *grows* to whatever the
-                    // parent offers, which pinned the cloud open at full cap.
-                    // Neither `fixedSize` nor measuring inside the ScrollView
-                    // works: a ScrollView is greedy, and a GeometryReader placed
-                    // within one measures the height the scroller already
-                    // imposed, settling at a single row.
+                    // The cap belongs on the scrolling branch: `.frame(maxHeight:)`
+                    // *grows* to whatever the parent offers, which pinned the
+                    // cloud open at full height.
                     ViewThatFits(in: .vertical) {
                         stack
                         ScrollViewReader { proxy in
@@ -284,22 +328,27 @@ struct Cloud: View {
                                 .defaultScrollAnchor(.bottom)
                                 .onChange(of: messages.count) {
                                     if let last = messages.last {
-                                        withAnimation {
-                                            proxy.scrollTo(last.id, anchor: .bottom)
-                                        }
+                                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                                     }
                                 }
+                                // Scrolled-away messages fade out instead of
+                                // ending in a hard flat slice.
+                                .mask(LinearGradient(
+                                    stops: [.init(color: .clear, location: 0),
+                                            .init(color: .black.opacity(0.55), location: 0.10),
+                                            .init(color: .black, location: 0.22),
+                                            .init(color: .black, location: 1)],
+                                    startPoint: .top, endPoint: .bottom))
                         }
                         .frame(height: cap)
                     }
                     .background(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(.regularMaterial))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.10)))
 
-                    // thinking-cloud tail
                     HStack(spacing: 3) {
                         Circle().frame(width: 7, height: 7)
                         Circle().frame(width: 4, height: 4)
@@ -307,17 +356,17 @@ struct Cloud: View {
                     .foregroundStyle(.regularMaterial)
                     .padding(.leading, 22)
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
             }
         }
         .frame(height: cap, alignment: .bottom)
-        .animation(.easeOut(duration: 0.18), value: messages.count)
     }
 }
 
 struct Pet: View {
     let mood: Mood
     let solid: Bool
+    let unread: Bool
+    let dragging: Bool
 
     var body: some View {
         ZStack {
@@ -326,10 +375,21 @@ struct Pet: View {
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.25),
                                                lineWidth: 1))
                 .overlay(Circle().strokeBorder(
-                    Color.accentColor.opacity(solid ? 0.9 : 0),
-                    lineWidth: 2.5))
+                    Color.accentColor.opacity(solid ? 0.9 : 0), lineWidth: 2.5))
                 .frame(width: L.pet, height: L.pet)
-                .scaleEffect(mood == .petted ? 1.10 : 1.0)
+                .scaleEffect(mood == .petted ? 1.10 : (dragging ? 1.06 : 1.0))
+                // Lifts off the desktop while carried.
+                .shadow(color: .black.opacity(dragging ? 0.32 : 0),
+                        radius: dragging ? 12 : 0, y: dragging ? 6 : 0)
+
+            if unread {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 13, height: 13)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.2)))
+                    .offset(x: L.pet / 2 - 5, y: -L.pet / 2 + 5)
+                    .transition(.scale)
+            }
             if mood == .sleeping {
                 Text("z z")
                     .font(.system(size: 12, weight: .medium))
@@ -339,6 +399,7 @@ struct Pet: View {
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.55), value: mood)
         .animation(.easeOut(duration: 0.14), value: solid)
+        .animation(.easeOut(duration: 0.16), value: dragging)
         .contentShape(Circle())
     }
 }
@@ -346,15 +407,14 @@ struct Pet: View {
 struct Assembly: View {
     @ObservedObject var state: PetState
     let win: PetWindow
+    let ttl: TimeInterval
     @FocusState private var focused: Bool
-    /// Offset from the cursor to the pet's centre, captured when the drag starts.
     @State private var grab: CGSize?
 
     /// Driven by the absolute cursor position, never by `translation`.
-    /// `translation` is measured in the window's own coordinate space, so
-    /// moving the window shifts the baseline the next translation is measured
-    /// against — the pet chases the cursor and overshoots. Reading
-    /// `NSEvent.mouseLocation` is in screen space and cannot feed back.
+    /// `translation` is measured in the window's own coordinate space, so moving
+    /// the window shifts the baseline the next translation is measured against —
+    /// the pet chases the cursor and overshoots.
     private var drag: some Gesture {
         DragGesture(minimumDistance: 1, coordinateSpace: .global)
             .onChanged { _ in
@@ -374,44 +434,56 @@ struct Assembly: View {
             }
     }
 
+    private func cloud(cap: CGFloat) -> some View {
+        Cloud(messages: state.expanded ? state.messages : [],
+              cap: cap) { state.life($0, ttl) }
+    }
+
+    private var pet: some View {
+        Pet(mood: state.mood, solid: state.solid,
+            unread: state.unread, dragging: state.dragging)
+            .gesture(drag)
+            .onTapGesture { pin() }
+    }
+
+    @ViewBuilder private var controls: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                TextField("say something…", text: $state.draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($focused)
+                    .onSubmit { state.send() }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Capsule().fill(.regularMaterial))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10)))
+            .frame(width: 236)
+            .onExitCommand { close() }
+
+            HStack(spacing: 6) {
+                ForEach(PetAction.enabled) { a in
+                    action(a.id) { a.run(state) }
+                }
+                moveHandle()
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: L.gap) {
-            Cloud(messages: state.showsCloud ? state.messages : [],
-                  cap: win.cloudCap)
-
-            Pet(mood: state.mood, solid: state.solid)
-                .gesture(drag)
-                .onTapGesture { open() }
-
-            VStack(spacing: 8) {
-                if state.composerOpen {
-                    HStack(spacing: 6) {
-                        TextField("say something…", text: $state.draft)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12.5))
-                            .focused($focused)
-                            .onSubmit { state.send() }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(.regularMaterial))
-                    .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10)))
-                    .frame(width: 236)
-                    .onExitCommand { close() }
-
-                    HStack(spacing: 6) {
-                        ForEach(PetAction.enabled) { a in
-                            action(a.id) { a.run(state) }
-                        }
-                        moveHandle()
-                    }
-                }
+            cloud(cap: win.cloudCap)
+            pet
+            VStack(spacing: 0) {
+                if state.expanded { controls }
                 Spacer(minLength: 0)
             }
             .frame(height: L.bottom, alignment: .top)
         }
         .frame(width: L.width, height: win.height)
-        .onChange(of: state.composerOpen) { _, open in focused = open }
+        .onChange(of: state.focusRequested) { _, want in focused = want }
+        .onChange(of: state.expanded) { _, open in if !open { focused = false } }
     }
 
     private func action(_ title: String, _ go: @escaping () -> Void) -> some View {
@@ -438,15 +510,13 @@ struct Assembly: View {
         withAnimation(.easeOut(duration: 0.14)) { state.collapse() }
     }
 
-    private func open() {
-        Trace.write("open")
-        state.unread = false
-        // Cloud and composer appear in the same step, not one before the other.
-        withAnimation(.easeOut(duration: 0.16)) {
-            state.expanded = true
-            state.composerOpen = true
-        }
+    /// Clicking pins the assembly open, so it survives the cursor leaving.
+    private func pin() {
+        Trace.write("pin")
+        state.pinned = true
+        withAnimation(.easeOut(duration: 0.16)) { state.expand() }
         win.panel.makeKey()
+        state.focusRequested = true
     }
 }
 
@@ -471,6 +541,7 @@ struct Assembly: View {
     var win: PetWindow!
     var status: NSStatusItem!
     var dwellSince: Date?
+    var leftSince: Date?
     var timer: Timer?
     var escMonitor: Any?
 
@@ -478,8 +549,9 @@ struct Assembly: View {
         win = PetWindow(config: config)
         win.restore(offset: config.profile == "a" ? 0 : -260)
 
-        let host = NSHostingView(rootView: Assembly(state: state, win: win))
-        host.frame = NSRect(x: 0, y: 0, width: L.width, height: win.height)
+
+        let host = NSHostingView(rootView: Assembly(state: state, win: win, ttl: config.expiry))
+        host.frame = NSRect(origin: .zero, size: win.panel.frame.size)
         win.panel.contentView = host
         win.panel.orderFrontRegardless()
 
@@ -496,7 +568,7 @@ struct Assembly: View {
         }
 
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
-            if e.keyCode == 53, self.state.composerOpen {
+            if e.keyCode == 53, self.state.expanded {
                 self.closeComposer(); return nil
             }
             return e
@@ -530,16 +602,16 @@ struct Assembly: View {
                 else { state.messages.append(Msg(text: text, mine: true)) }
             }
             if !CommandLine.arguments.contains("--idle") {
-                state.expanded = true
-                state.composerOpen = true
-                state.draft = "on my way"
+                state.pinned = true      // pin first: an unpinned assembly
+                state.draft = "on my way" // starts the linger countdown
+                state.expand()
             }
             if CommandLine.arguments.contains("--collapsed") {
                 state.collapse()        // messages survive; the UI hides
             }
             win.panel.backgroundColor = NSColor(calibratedWhite: 0.55, alpha: 1)
             try? await Task.sleep(for: .milliseconds(700))
-            print("capture: msgs=\(state.messages.count) expanded=\(state.expanded) composerOpen=\(state.composerOpen) showsCloud=\(state.showsCloud)")
+            print("capture: msgs=\(state.messages.count) petY=\(Int(win.petCenter.y)) frame=\(win.panel.frame) winH=\(win.height)")
             for (name, appearance) in [("light", NSAppearance.Name.aqua),
                                        ("dark", NSAppearance.Name.darkAqua)] {
                 win.panel.appearance = NSAppearance(named: appearance)
@@ -614,11 +686,10 @@ struct Assembly: View {
             try? await Task.sleep(for: .milliseconds(300))
             print("after receive -> messages=\(state.messages.count) unread=\(state.unread) solid=\(state.solid) ignoresMouse=\(p.ignoresMouseEvents)")
 
-            state.composerOpen = true
             state.draft = "typed by diagnostics"
             state.send()
             try? await Task.sleep(for: .milliseconds(200))
-            print("after send -> messages=\(state.messages.count) draft=\"\(state.draft)\" composerOpen=\(state.composerOpen)")
+            print("after send -> messages=\(state.messages.count) draft=\"\(state.draft)\" pinned=\(state.pinned)")
 
             // Movement persists as relative coordinates.
             let before = win.petCenter
@@ -639,21 +710,40 @@ struct Assembly: View {
     func tickForDiagnostics() { tick() }
 
     private func tick() {
-        // Dwell-to-solidify: poll the cursor rather than rely on hover, which a
-        // click-through window never receives.
         if state.dragging {                 // never interrupt a drag
             win.panel.ignoresMouseEvents = false
             return
         }
-        let inside = win.hit(NSEvent.mouseLocation)
+        let inside = win.hitAssembly(NSEvent.mouseLocation, expanded: state.expanded)
         if inside {
+            leftSince = nil
             if dwellSince == nil { dwellSince = Date() }
-            if let s = dwellSince, Date().timeIntervalSince(s) >= L.dwell {
+            let held = Date().timeIntervalSince(dwellSince!)
+            if held >= L.dwell {
                 state.hovering = true
+                if !state.expanded {
+                    Trace.write("hoverOpen")
+                    withAnimation(.easeOut(duration: 0.16)) { state.expand() }
+                }
+            }
+            // Focus is a later, separate step: showing the composer must not
+            // swallow a sentence being typed into the user's editor.
+            if held >= L.focusDwell && !state.focusRequested {
+                win.panel.makeKey()
+                state.focusRequested = true
             }
         } else {
             dwellSince = nil
             state.hovering = false
+            state.focusRequested = false
+            if state.expanded && !state.pinned {
+                if leftSince == nil { leftSince = Date() }
+                if Date().timeIntervalSince(leftSince!) >= L.linger {
+                    Trace.write("lingerCollapse")
+                    withAnimation(.easeOut(duration: 0.14)) { state.collapse() }
+                    leftSince = nil
+                }
+            }
         }
         win.panel.ignoresMouseEvents = !state.solid
 
@@ -668,7 +758,7 @@ struct Assembly: View {
     /// Messages stay alive underneath and reappear when it is opened again.
     private func closeComposer() {
         Trace.write("outsideClick expandedBefore=\(state.expanded)")
-        guard state.composerOpen || state.expanded else { return }
+        guard state.expanded else { return }
         withAnimation(.easeOut(duration: 0.14)) { state.collapse() }
     }
 

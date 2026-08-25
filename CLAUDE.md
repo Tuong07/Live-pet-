@@ -171,6 +171,9 @@ The pet is one object with one position. Both apps render the same thing.
 relative spot on a 13" laptop and a 27" display. Clamp on render so the whole
 assembly — cloud, pet, composer, action row — stays on screen.
 
+**The pet lifts while dragged** — a slight scale-up and a shadow, so it reads as
+picked up by an invisible hand rather than sliding along the desktop.
+
 **Dragging is pinned to the cursor.** The pet's centre tracks the absolute
 cursor position with the grab offset held constant. Do not drive this from a
 gesture's `translation`: that is measured in the window's own coordinate space,
@@ -243,10 +246,11 @@ The window exists only in memory. Quit the app, close the lid, or lose power and
 it empties immediately — there is nothing to recover because nothing was written
 down. Scroll to the edge of the last half hour and there is no "older".
 
-**Unread handling:** an unread message keeps its bubble prominent until
-acknowledged, so it can't be missed during a meeting. Once read it demotes into
-the rolling stack and lives out the rest of its thirty minutes. Being away does
-not extend a message's life.
+**Unread handling:** an arriving message does **not** pop the cloud open by
+itself — that would be unwelcome mid-meeting or mid-screenshare. It shows a
+small pip on the pet, which also solidifies so it is clickable. Opening the pet
+clears it. Once read the message demotes into the rolling stack and lives out
+the rest of its thirty minutes. Being away does not extend a message's life.
 
 ### Reply input
 
@@ -275,39 +279,46 @@ whole assembly lives in the one `NSPanel`.
 
 ### Idle
 
-Only the cat is visible. No cloud, no input, no action row — an empty cloud is
-clutter.
+Only the cat is visible. No cloud, no composer, no action row — an empty cloud
+is clutter.
 
 **The pet is click-through when idle** so it can never block a button
 underneath. It must still be hoverable, and `ignoresMouseEvents = true` delivers
-no events at all — not even hover. Resolution:
+no events at all — not even hover. Resolution: poll `NSEvent.mouseLocation`
+(~20Hz, a static read needing no Accessibility permission) and compare against
+the pet's frame.
 
-- Poll `NSEvent.mouseLocation` (~20Hz; a static read, no Accessibility
-  permission needed) and compare against the pet's frame.
-- After a short **dwell** (~200ms) with the cursor over the pet, set
-  `ignoresMouseEvents = false`. The pet solidifies and gives a subtle highlight.
-- Cursor leaves, it goes transparent again.
+### Opening — hover, not click
+
+**Hovering opens the assembly.** After a ~200ms dwell on the pet, the composer
+and action row appear together, and the cloud with them if any messages are
+live. No click is required.
 
 The dwell matters: a cursor merely passing over the pet on its way somewhere
-else must not steal the click. The pet also solidifies whenever it has an unread
-message, since it wants attention then.
+else must not open it. It also fixes a bug where a click arriving before the
+dwell completed passed straight through to the app underneath, so it took two
+clicks to open.
 
-**Verify at build time** that polling `NSEvent.mouseLocation` and
-`NSEvent.modifierFlags` triggers no Accessibility prompt. If either does, drop
-it and make the global hotkey the only way to reach a quiet pet.
+**Keyboard focus is a separate, later step (~600ms dwell).** Showing the
+composer must not capture the keyboard — a cursor drifting over the pet
+mid-sentence would swallow the rest of the line into the composer. Focus is
+taken only on a deliberate hover, or immediately on click.
 
-### Opening the composer
+**Clicking pins it open.** A pinned assembly stays until Esc or a click outside,
+which is what makes a long reply possible.
 
-Click the cat. The input bubble and the action row appear **together** beneath
-it, and the input takes the keyboard without activating the app.
+**Un-hovering starts a ~500ms countdown**, then the assembly collapses. Pinned
+assemblies ignore it. The hit test must cover the *whole visible assembly*, not
+just the pet — otherwise moving the cursor from the pet down to the composer
+counts as leaving and starts the countdown.
 
 - Enter sends. **The composer stays open** for rapid back-and-forth.
 - The cloud and the composer appear in the **same step** — never one before the
   other, and never an empty cloud waiting to be filled.
 - Esc collapses the whole assembly back to just the pet.
-- **Clicking outside collapses it too** — cloud, composer and action row all go.
-  Messages stay alive underneath for the rest of their thirty minutes and
-  reappear when the pet is opened again. Collapsing hides; it does not expire.
+- **Clicking outside collapses it too.** Messages stay alive underneath for the
+  rest of their thirty minutes and reappear when the pet is opened again.
+  Collapsing hides; it does not expire.
 
 ### The thinking cloud
 
@@ -316,8 +327,14 @@ of the conversation, so it reads as an exchange rather than an inbox.
 
 - Hidden entirely when no messages are live, and whenever the pet is collapsed.
 - An arriving message expands it on its own — that is what makes it noticeable.
-- Grows with the conversation up to a cap (~1/3 of screen height). Past that,
-  newest sit at the bottom and older ones scroll out of view.
+- Grows with the conversation up to a cap (~1/3 of screen height, less two lines
+  of text). Past that, newest sit at the bottom and older ones scroll out of
+  view.
+- **Top and bottom must read the same.** Equal inner padding, equal corner
+  radius, and a soft fade at the top edge so scrolled-away messages do not end
+  in a hard flat slice.
+- **Bubbles dim as they age**, fading gradually across their thirty minutes so
+  expiry reads as deliberate rather than as messages randomly vanishing.
 - Scrolled-away messages are still alive until their 30 minutes expire.
 - Individual bubbles wrap to fit their text.
 
@@ -720,20 +737,25 @@ terminal's grant) gives `AXIsProcessTrusted() == false`, and
 reads, not event taps. Dwell-to-solidify is safe, and the design's promise of
 never showing a keystroke-observation prompt holds.
 
+### Surfaced by the demo
+
+- **Composer placement near the screen bottom** — the composer and action row
+  need ~210pt below the pet, so clamping forbids the pet from sitting near the
+  bottom edge, which is where a desktop pet wants to live. Flipping the stack
+  upward was built and **rejected on sight** — the user wants the cloud above
+  and everything else below, always. Some other answer is needed, or the clamp
+  stays. Do not rebuild the flip.
+
+  Worth knowing if this is revisited: a panel hanging off the bottom of the
+  screen gets dragged back by AppKit with an *animated* `setFrame`, which never
+  consults `constrainFrameRect`. The window itself has to stay on screen.
+
 ### Needed for phase 2
 
 - **Unpairing** — can a pairing be broken and restarted, and does it need both
   sides to agree? Matters much more for public release than for one pair.
 - **Forward secrecy** — add the per-connection X25519 handshake? Recommendation
   is yes.
-
-### Surfaced by the demo
-
-- **Composer placement near the screen bottom** — the composer and action row
-  need ~220pt below the pet, so clamping forbids the pet from sitting near the
-  bottom edge, which is exactly where a desktop pet wants to live. Should the
-  composer flip *above* the pet when there is no room below (and the cloud flip
-  under it)? Currently the pet is simply clamped, which is the wrong trade.
 
 ### Needed for phase 3
 
