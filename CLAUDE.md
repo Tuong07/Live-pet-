@@ -524,6 +524,25 @@ whether click-through behaves while actually working, and whether the panel sits
 correctly over a real fullscreen app. Flags are confirmed set; the feel is not
 something a headless run can judge.
 
+### UI changes need a preview first
+
+**Never ship a UI change unseen. Render it, show it, ask, then commit.**
+
+1. Build the change but **do not commit it**.
+2. Render it with `--snapshot`, covering the states it affects — idle, a few
+   messages, the capped cloud, light and dark.
+3. Send the images and ask plainly whether to keep it.
+4. Commit on a yes. On a no, revert the working tree so nothing lands.
+
+A preview requires writing the code — the snapshot comes from the real app — but
+writing it is not shipping it. The distinction that matters to the user is what
+enters the repo and what he has to look at on his screen.
+
+This rule exists because the composer-flip layout was reasoned about, agreed,
+built, committed and then rejected the moment it was actually seen. A picture
+would have settled it before any of that. Describing a layout in words is not a
+substitute for showing it.
+
 ### The demo is disposable
 
 Demo code exists to answer questions, then be thrown away. Do not let it harden
