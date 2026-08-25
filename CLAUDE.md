@@ -14,7 +14,8 @@ people at once. Drag it to the left and it moves left on her screen too, as if
 an invisible hand picked it up. Which is what happened: your hand. Every design
 question resolves toward preserving that illusion.
 
-**Status:** spec complete. No code has been written.
+**Status:** spec complete. Window-behaviour demo built in `demo/` — see
+**Demo status**. No production code yet.
 
 **Do not write code until the user explicitly says to start.** Discussing scope,
 agreeing an approach, or being asked "any more questions?" is **not**
@@ -447,7 +448,7 @@ then and keep moving. Do not stall the build to assemble a questionnaire.
 
 ### Agreed demo scope — window only
 
-Decided, **awaiting authorization to build**. One instance, no networking:
+Built. One instance, no networking:
 
 - Borderless non-activating `NSPanel`, floating above fullscreen apps, on every
   Space, main display only.
@@ -460,6 +461,31 @@ Decided, **awaiting authorization to build**. One instance, no networking:
 
 Deliberately excluded: relay, pairing, encryption, mirroring, real art. Those
 come once the window behaviour is proven.
+
+### Demo status
+
+`demo/main.swift` + `demo/build.sh`. Build and run:
+
+```
+./demo/build.sh && open -n demo/LivePetDemo.app
+```
+
+Flags: `--profile=<id>` (namespaces stored state, applies the dev offset),
+`--expiry=<seconds>` (default 1800), `--diag` (prints window state, exercises
+the state machine headlessly, exits).
+
+**Verified by `--diag` on this machine:** window level 25 (`.statusBar`),
+`canJoinAllSpaces` and `fullScreenAuxiliary` both set, borderless and
+non-activating, transparent, activation policy `.accessory` (no Dock icon),
+status item present, click-through flipping with hover and unread state,
+composer staying open after send, relative position saving and restoring across
+launches, profile isolation with the dev offset, and clamping surviving absurd
+coordinates.
+
+**Not verified:** anything visual. Screen recording is not granted to the
+terminal here, so screenshots and `CGWindowListCopyWindowInfo` both fail. The
+user has to eyeball layout, animation, and whether dwell-to-solidify feels
+right.
 
 ### The demo is disposable
 
@@ -650,9 +676,14 @@ Tagged with the phase that needs them answered.
 **None — phase 1 is unblocked.** Resolved: click-through with dwell, floats over
 fullscreen and all Spaces, main display only, menu bar only with no Dock icon.
 
-One thing to confirm *during* the build rather than before it: that polling
-`NSEvent.mouseLocation` raises no Accessibility prompt. If it does, the global
-hotkey becomes the only way to reach a quiet pet.
+**Still unproven: whether cursor polling needs Accessibility.** The demo polls
+`NSEvent.mouseLocation` and it works, but `AXIsProcessTrusted()` returns `true`
+because the process inherits the launching terminal's grant — so the run proves
+nothing about an untrusted process. Both APIs are state reads rather than event
+taps and should need no permission, but that must be confirmed on a machine that
+has never granted it (the first real install is the honest test). If it turns
+out to need permission, the global hotkey becomes the only way to reach a quiet
+pet.
 
 ### Needed for phase 2
 
@@ -660,6 +691,14 @@ hotkey becomes the only way to reach a quiet pet.
   sides to agree? Matters much more for public release than for one pair.
 - **Forward secrecy** — add the per-connection X25519 handshake? Recommendation
   is yes.
+
+### Surfaced by the demo
+
+- **Composer placement near the screen bottom** — the composer and action row
+  need ~220pt below the pet, so clamping forbids the pet from sitting near the
+  bottom edge, which is exactly where a desktop pet wants to live. Should the
+  composer flip *above* the pet when there is no room below (and the cloud flip
+  under it)? Currently the pet is simply clamped, which is the wrong trade.
 
 ### Needed for phase 3
 
