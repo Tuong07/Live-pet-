@@ -50,6 +50,23 @@ struct Msg: Identifiable, Equatable {
 
 enum Mood: Equatable { case idle, petted, sleeping }
 
+/// Spec: the action row is "a list, not three hardcoded buttons" so poke, feed
+/// and kiss can slot in later without a rewrite. `move` is not here — it is a
+/// drag handle rather than a fired action, and unlike these it is not mirrored.
+struct PetAction: Identifiable {
+    let id: String
+    let run: @MainActor (PetState) -> Void
+
+    static let enabled: [PetAction] = [
+        PetAction(id: "pet")   { $0.flash(.petted) },
+        PetAction(id: "sleep") { $0.flash(.sleeping, for: 2.5) },
+        // Phase 4, once the sprites exist:
+        // PetAction(id: "poke")  { $0.flash(.startled) },
+        // PetAction(id: "feed")  { $0.flash(.eating) },
+        // PetAction(id: "kiss")  { $0.flash(.blushing) },
+    ]
+}
+
 @MainActor final class PetState: ObservableObject {
     @Published var composerOpen = false
     @Published var draft = ""
@@ -192,13 +209,6 @@ final class PetPanel: NSPanel {
 
 // MARK: - Views
 
-private struct HeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct Bubble: View {
     let msg: Msg
     var body: some View {
@@ -221,33 +231,46 @@ struct Bubble: View {
 struct Cloud: View {
     let messages: [Msg]
     let cap: CGFloat
-    @State private var content: CGFloat = 0
+
+    /// One definition, used both as the plain stack and as the scroller's
+    /// content, so the two can never drift apart.
+    private var stack: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(messages) { Bubble(msg: $0).id($0.id) }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
             if !messages.isEmpty {
-                VStack(spacing: 4) {
-                    ScrollViewReader { proxy in
-                        ScrollView(.vertical) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                ForEach(messages) { Bubble(msg: $0).id($0.id) }
-                            }
-                            .padding(10)
-                            .background(GeometryReader { g in
-                                Color.clear.preference(key: HeightKey.self,
-                                                       value: g.size.height)
-                            })
+                VStack(alignment: .leading, spacing: 4) {
+                    // Hug the content until it reaches the cap, then scroll.
+                    // The cap belongs on the scrolling branch, not the
+                    // container: `.frame(maxHeight:)` *grows* to whatever the
+                    // parent offers, which pinned the cloud open at full cap.
+                    // Neither `fixedSize` nor measuring inside the ScrollView
+                    // works: a ScrollView is greedy, and a GeometryReader placed
+                    // within one measures the height the scroller already
+                    // imposed, settling at a single row.
+                    ViewThatFits(in: .vertical) {
+                        stack
+                        ScrollViewReader { proxy in
+                            ScrollView(.vertical) { stack }
+                                .scrollIndicators(.never)
+                                .defaultScrollAnchor(.bottom)
+                                .onChange(of: messages.count) {
+                                    if let last = messages.last {
+                                        withAnimation {
+                                            proxy.scrollTo(last.id, anchor: .bottom)
+                                        }
+                                    }
+                                }
                         }
-                        .scrollIndicators(.never)
-                        .defaultScrollAnchor(.bottom)
-                        .onChange(of: messages.count) {
-                            if let last = messages.last {
-                                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                            }
-                        }
+                        .frame(height: cap)
                     }
-                    .frame(height: min(max(content, 34), cap))
                     .background(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .fill(.regularMaterial))
@@ -262,9 +285,7 @@ struct Cloud: View {
                     }
                     .foregroundStyle(.regularMaterial)
                     .padding(.leading, 22)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .onPreferenceChange(HeightKey.self) { content = $0 }
                 .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottom)))
             }
         }
@@ -280,10 +301,12 @@ struct Pet: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.primary.opacity(mood == .sleeping ? 0.18 : 0.30))
+                .fill(Color.primary.opacity(mood == .sleeping ? 0.22 : 0.42))
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.25),
+                                               lineWidth: 1))
                 .overlay(Circle().strokeBorder(
-                    Color.accentColor.opacity(solid ? 0.85 : 0),
-                    lineWidth: 2))
+                    Color.accentColor.opacity(solid ? 0.9 : 0),
+                    lineWidth: 2.5))
                 .frame(width: L.pet, height: L.pet)
                 .scaleEffect(mood == .petted ? 1.10 : 1.0)
             if mood == .sleeping {
@@ -338,10 +361,12 @@ struct Assembly: View {
                     .background(Capsule().fill(.regularMaterial))
                     .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10)))
                     .frame(width: 236)
+                    .onExitCommand { close() }
 
                     HStack(spacing: 6) {
-                        action("pet") { state.flash(.petted) }
-                        action("sleep") { state.flash(.sleeping, for: 2.5) }
+                        ForEach(PetAction.enabled) { a in
+                            action(a.id) { a.run(state) }
+                        }
                         moveHandle()
                     }
                 }
@@ -373,6 +398,11 @@ struct Assembly: View {
             .gesture(drag)
     }
 
+    private func close() {
+        state.composerOpen = false
+        state.draft = ""
+    }
+
     private func open() {
         state.unread = false
         state.composerOpen = true
@@ -402,6 +432,7 @@ struct Assembly: View {
 
         buildStatusItem()
         if CommandLine.arguments.contains("--diag") { startDiagnostics() }
+        if let prefix = Self.argValue("--snapshot=") { startSnapshot(prefix) }
 
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
             MainActor.assumeIsolated { self.tick() }
@@ -421,11 +452,67 @@ struct Assembly: View {
             }
     }
 
+    static func argValue(_ key: String) -> String? {
+        CommandLine.arguments.first { $0.hasPrefix(key) }
+            .map { String($0.dropFirst(key.count)) }
+    }
+
+    /// Renders the assembly to PNG from inside the app. This is the view's own
+    /// bitmap, not a screen capture, so it needs no Screen Recording grant.
+    private func startSnapshot(_ prefix: String) {
+        let n = CommandLine.arguments.contains("--idle")
+            ? 0 : (Int(Self.argValue("--msgs=") ?? "3") ?? 3)
+        Task { @MainActor in
+            let script = ["hey — lunch soon?", "yeah, give me ten",
+                          "look outside 🌤",
+                          "the cat is sitting on my keyboard again and flatly refuses to move, send help",
+                          "ok back in 5"]
+            for i in 0..<n {
+                let text = script[i % script.count]
+                if i % 2 == 0 { state.receive(text) }
+                else { state.messages.append(Msg(text: text, mine: true)) }
+            }
+            if !CommandLine.arguments.contains("--idle") {
+                state.composerOpen = true
+                state.draft = "on my way"
+            }
+            win.panel.backgroundColor = NSColor(calibratedWhite: 0.55, alpha: 1)
+            try? await Task.sleep(for: .milliseconds(700))
+            print("capture: msgs=\(state.messages.count) composerOpen=\(state.composerOpen)")
+            for (name, appearance) in [("light", NSAppearance.Name.aqua),
+                                       ("dark", NSAppearance.Name.darkAqua)] {
+                win.panel.appearance = NSAppearance(named: appearance)
+                try? await Task.sleep(for: .milliseconds(450))
+                capture(to: "\(prefix)-\(name).png")
+            }
+            print("snapshots written")
+            exit(0)
+        }
+    }
+
+    /// `cacheDisplay` paints the window's background into the bitmap, which is
+    /// why an earlier light-mode capture came out white-on-white. Setting the
+    /// panel's background to grey for the capture makes both schemes readable.
+    /// `ImageRenderer` is not an option: it renders `ScrollView` contents empty
+    /// and `TextField` as an unsupported-view placeholder.
+    private func capture(to path: String) {
+        guard let view = win.panel.contentView else { return }
+        let r = view.bounds
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: r) else { return }
+        view.cacheDisplay(in: r, to: rep)
+        guard let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
+    }
+
     /// Self-reporting for verification: screen-recording permission is not
     /// granted here, so the app describes its own window state.
     private func startDiagnostics() {
         let screen = primaryScreen()
         let p = win.panel
+        if let out = Self.argValue("--diagout=") {
+            freopen(out, "w", stdout)
+            setvbuf(stdout, nil, _IONBF, 0)
+        }
         print("--- live-pet diag ---")
         print("screens: \(NSScreen.screens.count)")
         print("main screen frame: \(screen.frame)")

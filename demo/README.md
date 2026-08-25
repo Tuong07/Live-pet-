@@ -16,6 +16,14 @@ Quit from the `◍` menu bar item.
 | `--profile=<id>` | Namespaces stored state and applies the dev position offset. Two instances need different profiles. |
 | `--expiry=<seconds>` | Message lifetime, default 1800. Use something small to watch expiry. |
 | `--diag` | Prints window state, exercises the state machine headlessly, exits. |
+| `--diagout=<path>` | Sends `--diag` output to a file, so it survives being launched by `open`. |
+| `--snapshot=<prefix>` | Renders the assembly to `<prefix>-light.png` and `<prefix>-dark.png` and exits. |
+| `--msgs=<n>` | Messages to stage for a snapshot (default 3). |
+| `--idle` | Snapshot the idle state: pet only, no cloud, no composer. |
+
+Snapshots render the view from inside the process, so they need no Screen
+Recording permission — unlike `screencapture` or `CGWindowListCopyWindowInfo`,
+which both fail without it.
 
 ## Two instances
 

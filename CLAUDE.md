@@ -474,7 +474,7 @@ Flags: `--profile=<id>` (namespaces stored state, applies the dev offset),
 `--expiry=<seconds>` (default 1800), `--diag` (prints window state, exercises
 the state machine headlessly, exits).
 
-**Verified by `--diag` on this machine:** window level 25 (`.statusBar`),
+**Verified mechanically** (`--diag`): window level 25 (`.statusBar`),
 `canJoinAllSpaces` and `fullScreenAuxiliary` both set, borderless and
 non-activating, transparent, activation policy `.accessory` (no Dock icon),
 status item present, click-through flipping with hover and unread state,
@@ -482,10 +482,17 @@ composer staying open after send, relative position saving and restoring across
 launches, profile isolation with the dev offset, and clamping surviving absurd
 coordinates.
 
-**Not verified:** anything visual. Screen recording is not granted to the
-terminal here, so screenshots and `CGWindowListCopyWindowInfo` both fail. The
-user has to eyeball layout, animation, and whether dwell-to-solidify feels
-right.
+**Verified visually** (`--snapshot`): the app renders its own view to PNG from
+inside the process, so no Screen Recording grant is needed. Confirmed in light
+and dark: idle shows only the pet; the cloud hugs three messages, caps at a
+third of the screen with twenty and scrolls to the newest; long text wraps; both
+sides of the conversation align correctly; the composer and action row appear
+together beneath the pet with the tail dots above it.
+
+**Left to human judgement:** whether the dwell delay feels right in the hand,
+whether click-through behaves while actually working, and whether the panel sits
+correctly over a real fullscreen app. Flags are confirmed set; the feel is not
+something a headless run can judge.
 
 ### The demo is disposable
 
@@ -676,14 +683,12 @@ Tagged with the phase that needs them answered.
 **None — phase 1 is unblocked.** Resolved: click-through with dwell, floats over
 fullscreen and all Spaces, main display only, menu bar only with no Dock icon.
 
-**Still unproven: whether cursor polling needs Accessibility.** The demo polls
-`NSEvent.mouseLocation` and it works, but `AXIsProcessTrusted()` returns `true`
-because the process inherits the launching terminal's grant — so the run proves
-nothing about an untrusted process. Both APIs are state reads rather than event
-taps and should need no permission, but that must be confirmed on a machine that
-has never granted it (the first real install is the honest test). If it turns
-out to need permission, the global hotkey becomes the only way to reach a quiet
-pet.
+**Settled: cursor polling needs no Accessibility permission.** Launching the
+demo through `open` (so it is started by launchd rather than inheriting the
+terminal's grant) gives `AXIsProcessTrusted() == false`, and
+`NSEvent.mouseLocation` still returns real coordinates. Both APIs are state
+reads, not event taps. Dwell-to-solidify is safe, and the design's promise of
+never showing a keystroke-observation prompt holds.
 
 ### Needed for phase 2
 
