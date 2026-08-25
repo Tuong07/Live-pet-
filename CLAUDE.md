@@ -47,7 +47,10 @@ Settled. Treat as constraints, not suggestions.
 | Message types | Short text, emoji, and four pet actions. No images or files. |
 | Pet actions | Pet and sleep now, mirrored. Poke/feed/kiss later. Row is a list, not hardcoded. |
 | Notification | Animation + speech bubble + soft sound. Bubble waits until read. |
-| Position | Stays where dragged. Wandering/idle life comes after MVP. |
+| Position | Stays where dragged, on the **main display only**. Wandering comes after MVP. |
+| Layering | Floats above fullscreen apps, present on every Space. |
+| Click-through | Transparent to clicks when idle; solidifies on cursor dwell. |
+| App presence | **Menu bar only, no Dock icon** (`LSUIElement`). |
 | Art | PNG frame sequences. **The user is drawing these himself.** |
 | Distribution | Public release. Signed and notarized. |
 
@@ -260,7 +263,25 @@ whole assembly lives in the one `NSPanel`.
 ### Idle
 
 Only the cat is visible. No cloud, no input, no action row — an empty cloud is
-clutter. Hovering gives a subtle highlight so it reads as clickable.
+clutter.
+
+**The pet is click-through when idle** so it can never block a button
+underneath. It must still be hoverable, and `ignoresMouseEvents = true` delivers
+no events at all — not even hover. Resolution:
+
+- Poll `NSEvent.mouseLocation` (~20Hz; a static read, no Accessibility
+  permission needed) and compare against the pet's frame.
+- After a short **dwell** (~200ms) with the cursor over the pet, set
+  `ignoresMouseEvents = false`. The pet solidifies and gives a subtle highlight.
+- Cursor leaves, it goes transparent again.
+
+The dwell matters: a cursor merely passing over the pet on its way somewhere
+else must not steal the click. The pet also solidifies whenever it has an unread
+message, since it wants attention then.
+
+**Verify at build time** that polling `NSEvent.mouseLocation` and
+`NSEvent.modifierFlags` triggers no Accessibility prompt. If either does, drop
+it and make the global hotkey the only way to reach a quiet pet.
 
 ### Opening the composer
 
@@ -326,6 +347,7 @@ user, not to make while implementing.
 | Networking | `URLSessionWebSocketTask` | Built in; reconnect with exponential backoff. |
 | Sound | `AVAudioPlayer` | Built in. |
 | Deployment target | macOS 14+ | Three versions back; covers effectively everyone. |
+| App presence | `LSUIElement = true` + `NSStatusItem` | No Dock icon, no app switcher entry. Menu bar holds Quit, Settings, pairing. |
 
 The window configuration is load-bearing: borderless, **non-activating** (so
 clicking the cat never steals focus from the user's editor), window level
@@ -385,6 +407,57 @@ observers, and anyone who steals a machine while the app is closed.
 Explicitly **not** defended against: someone with access to an unlocked Mac
 running the app — they can read the current window and send as you. That's the
 same as any messenger and is not worth engineering around.
+
+---
+
+## Testing
+
+**There is no macOS simulator.** The Mac is the target hardware; the app runs
+natively. The real problem is that this is a two-machine app.
+
+### Primary loop: two instances on one Mac
+
+`open -n /path/to/LivePet.app` forces a second instance. Two pets side by side,
+paired to each other — the best way to see the shared-pet illusion, since both
+halves are visible at once.
+
+Two things must be built for this to work, **from phase 1**:
+
+- **Profile namespacing** — a `--profile=<id>` launch argument that namespaces
+  Keychain and `UserDefaults`. Without it both instances fight over the same
+  stored state and can never be strangers who pair.
+- **Dev position offset** — mirrored relative coordinates put two instances on
+  one screen exactly on top of each other. The second profile gets nudged aside
+  in dev builds.
+
+Relay runs locally (`cd relay && npm run dev`) with a relay URL override in the
+app. Everything on one machine, no internet.
+
+### Scripted peer
+
+A ~40-line Node script that connects as the other side and speaks the protocol.
+Build it alongside the relay in phase 2. It makes the tedious cases trivial:
+flooding the cloud to hit its cap, disconnecting mid-drag to exercise `state`
+reconciliation, and waiting out a 30-minute expiry.
+
+### What genuinely needs a second Mac
+
+One machine cannot honestly exercise:
+
+- **Different screen sizes** — the entire reason relative coordinates exist.
+- **Real network conditions** — latency, wifi drops, sleep/wake reconnects.
+- **Gatekeeper**, on a machine that didn't build the app.
+- **The feeling** of the pet moving when you weren't expecting it. That is the
+  product, and it cannot be felt alone.
+
+A macOS VM with a different resolution covers the screen-size case if a second
+Mac isn't available.
+
+### Automated
+
+Swift Testing for the things that are hard to eyeball: key derivation, message
+expiry, position reconciliation, the connection state machine. No UI snapshot
+tests for an animated pet.
 
 ---
 
@@ -485,8 +558,10 @@ not a code change.
 
 Each phase produces something runnable, so the user can feel it and redirect.
 
-1. **A cat on the screen** — floating blank circle, draggable, remembers
-   position, survives restarts. No networking.
+1. **A cat on the screen** — floating blank circle on the main display, above
+   fullscreen apps and on every Space. Click-through with dwell-to-solidify.
+   Draggable, remembers position, survives restarts. Menu bar item with Quit.
+   Profile namespacing and the dev offset. No networking.
 2. **Two cats, one wire** — relay, pairing keys, encryption, presence. Text
    lands on the other machine. Ugly but real.
 3. **The conversation** — the thinking cloud with its growth cap and scrolling,
@@ -509,15 +584,12 @@ Tagged with the phase that needs them answered.
 
 ### Needed for phase 1
 
-- **Click-through when idle** — should mouse clicks pass through the cat to
-  whatever's behind it, so it can never block a button? If yes, it becomes
-  clickable only when it has something to say or a modifier is held.
-- **Fullscreen and Spaces** — confirm the cat should float above fullscreen apps
-  and appear on every Space. The stack assumes yes; it was never explicitly
-  confirmed.
-- **Multiple displays** — does the cat pick one screen and stay, or follow the
-  active one? Sharper now that position is mirrored: if you have two displays
-  and she has one, relative coordinates need a defined reference screen.
+**None — phase 1 is unblocked.** Resolved: click-through with dwell, floats over
+fullscreen and all Spaces, main display only, menu bar only with no Dock icon.
+
+One thing to confirm *during* the build rather than before it: that polling
+`NSEvent.mouseLocation` raises no Accessibility prompt. If it does, the global
+hotkey becomes the only way to reach a quiet pet.
 
 ### Needed for phase 2
 
