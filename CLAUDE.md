@@ -539,6 +539,23 @@ Two things must be built for this to work, **from phase 1**:
 Relay runs locally (`cd relay && npm run dev`) with a relay URL override in the
 app. Everything on one machine, no internet.
 
+### Driving the UI without a human
+
+Two techniques make the demo verifiable headlessly, and both should carry into
+the real app:
+
+- **`--snapshot`** renders the assembly to PNG *from inside the process*. This
+  is the view's own bitmap, not a screen capture, so it works with no Screen
+  Recording grant — unlike `screencapture` or `CGWindowListCopyWindowInfo`,
+  which both fail without one.
+- **Synthesised input.** A small `CGEvent` driver posts real mouse down / drag /
+  up sequences while the app appends a trace of cursor and pet positions. That
+  is how drag pinning was confirmed: the grab offset held constant within 1px
+  across every sample, with all 24 events delivered. A feedback loop or an
+  interrupted drag both show up immediately as a growing offset or missing
+  samples. Note the driver needs Accessibility (it posts events); the app does
+  not (it only reads cursor position).
+
 ### Scripted peer
 
 A ~40-line Node script that connects as the other side and speaks the protocol.

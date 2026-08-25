@@ -94,6 +94,7 @@ struct PetAction: Identifiable {
     }
 
     func collapse() {
+        Trace.write("collapse msgs=\(messages.count)")
         expanded = false
         composerOpen = false
         draft = ""
@@ -183,6 +184,10 @@ final class PetPanel: NSPanel {
     }
 
     func setPetCenter(_ p: CGPoint) {
+        defer {
+            let m = NSEvent.mouseLocation
+            Trace.write("move cursor=\(Int(m.x)),\(Int(m.y)) pet=\(Int(petCenter.x)),\(Int(petCenter.y))")
+        }
         let f = primaryScreen().frame
         // Spec: clamp so the assembly stays on screen, not just the pet.
         // Horizontally the full panel width is kept on screen, so the cloud and
@@ -434,6 +439,7 @@ struct Assembly: View {
     }
 
     private func open() {
+        Trace.write("open")
         state.unread = false
         // Cloud and composer appear in the same step, not one before the other.
         withAnimation(.easeOut(duration: 0.16)) {
@@ -441,6 +447,19 @@ struct Assembly: View {
             state.composerOpen = true
         }
         win.panel.makeKey()
+    }
+}
+
+/// Append-only trace so a synthesised UI drive can be checked afterwards.
+@MainActor final class Trace {
+    static var handle: FileHandle?
+    static func open(_ path: String) {
+        FileManager.default.createFile(atPath: path, contents: nil)
+        handle = FileHandle(forWritingAtPath: path)
+    }
+    static func write(_ line: String) {
+        guard let h = handle, let d = (line + "\n").data(using: .utf8) else { return }
+        h.write(d); try? h.synchronize()
     }
 }
 
@@ -465,6 +484,10 @@ struct Assembly: View {
         win.panel.orderFrontRegardless()
 
         buildStatusItem()
+        if let t = Self.argValue("--trace=") {
+            Trace.open(t)
+            Trace.write("start pet=\(Int(win.petCenter.x)),\(Int(win.petCenter.y))")
+        }
         if CommandLine.arguments.contains("--diag") { startDiagnostics() }
         if let prefix = Self.argValue("--snapshot=") { startSnapshot(prefix) }
 
@@ -644,6 +667,7 @@ struct Assembly: View {
     /// Clicking away collapses the whole assembly back to just the pet.
     /// Messages stay alive underneath and reappear when it is opened again.
     private func closeComposer() {
+        Trace.write("outsideClick expandedBefore=\(state.expanded)")
         guard state.composerOpen || state.expanded else { return }
         withAnimation(.easeOut(duration: 0.14)) { state.collapse() }
     }
