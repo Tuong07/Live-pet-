@@ -1,2 +1,4 @@
 # Live-pet
-A pet that lives on your desktop that allows you to communicate with your chosen one's phone 
+a shared virtual pet that lives on each other's macbook 
+you can use to talk to each other 
+send cute gesures 
