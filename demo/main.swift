@@ -74,9 +74,17 @@ struct PetAction: Identifiable {
     @Published var mood: Mood = .idle
     @Published var hovering = false     // cursor dwelling on the pet
     @Published var unread = false
+    @Published var dragging = false
+    /// The cloud and composer collapse together; messages stay alive underneath.
+    @Published var expanded = false
 
-    /// The pet accepts clicks when it is hovered, open, or wants attention.
-    var solid: Bool { hovering || composerOpen || unread }
+    /// The pet accepts clicks when it is hovered, open, dragged, or wants
+    /// attention. `dragging` is load-bearing: without it a fast drag outruns
+    /// the window, the cursor leaves the pet, click-through switches back on
+    /// mid-drag and the pet stops receiving the events moving it.
+    var solid: Bool { hovering || composerOpen || unread || dragging }
+
+    var showsCloud: Bool { expanded && !messages.isEmpty }
 
     func send() {
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,9 +93,16 @@ struct PetAction: Identifiable {
         draft = ""                      // composer stays open, per spec
     }
 
+    func collapse() {
+        expanded = false
+        composerOpen = false
+        draft = ""
+    }
+
     func receive(_ text: String) {
         messages.append(Msg(text: text, mine: false))
         if !composerOpen { unread = true }
+        expanded = true                 // an arriving message shows itself
         flash(.petted)
     }
 
@@ -157,6 +172,7 @@ final class PetPanel: NSPanel {
         panel.becomesKeyOnlyIfNeeded = false
         panel.isMovableByWindowBackground = false
         panel.ignoresMouseEvents = true
+        panel.animationBehavior = .none
     }
 
     /// Pet centre in screen coordinates (origin bottom-left).
@@ -326,22 +342,37 @@ struct Assembly: View {
     @ObservedObject var state: PetState
     let win: PetWindow
     @FocusState private var focused: Bool
-    @State private var dragStart: CGPoint?
+    /// Offset from the cursor to the pet's centre, captured when the drag starts.
+    @State private var grab: CGSize?
 
+    /// Driven by the absolute cursor position, never by `translation`.
+    /// `translation` is measured in the window's own coordinate space, so
+    /// moving the window shifts the baseline the next translation is measured
+    /// against — the pet chases the cursor and overshoots. Reading
+    /// `NSEvent.mouseLocation` is in screen space and cannot feed back.
     private var drag: some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .global)
-            .onChanged { v in
-                if dragStart == nil { dragStart = win.petCenter }
-                guard let s = dragStart else { return }
-                win.setPetCenter(CGPoint(x: s.x + v.translation.width,
-                                         y: s.y - v.translation.height))
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .onChanged { _ in
+                let m = NSEvent.mouseLocation
+                if grab == nil {
+                    let c = win.petCenter
+                    grab = CGSize(width: c.x - m.x, height: c.y - m.y)
+                    state.dragging = true
+                }
+                guard let g = grab else { return }
+                win.setPetCenter(CGPoint(x: m.x + g.width, y: m.y + g.height))
             }
-            .onEnded { _ in dragStart = nil; win.save() }
+            .onEnded { _ in
+                grab = nil
+                state.dragging = false
+                win.save()
+            }
     }
 
     var body: some View {
         VStack(spacing: L.gap) {
-            Cloud(messages: state.messages, cap: win.cloudCap)
+            Cloud(messages: state.showsCloud ? state.messages : [],
+                  cap: win.cloudCap)
 
             Pet(mood: state.mood, solid: state.solid)
                 .gesture(drag)
@@ -399,13 +430,16 @@ struct Assembly: View {
     }
 
     private func close() {
-        state.composerOpen = false
-        state.draft = ""
+        withAnimation(.easeOut(duration: 0.14)) { state.collapse() }
     }
 
     private func open() {
         state.unread = false
-        state.composerOpen = true
+        // Cloud and composer appear in the same step, not one before the other.
+        withAnimation(.easeOut(duration: 0.16)) {
+            state.expanded = true
+            state.composerOpen = true
+        }
         win.panel.makeKey()
     }
 }
@@ -473,12 +507,16 @@ struct Assembly: View {
                 else { state.messages.append(Msg(text: text, mine: true)) }
             }
             if !CommandLine.arguments.contains("--idle") {
+                state.expanded = true
                 state.composerOpen = true
                 state.draft = "on my way"
             }
+            if CommandLine.arguments.contains("--collapsed") {
+                state.collapse()        // messages survive; the UI hides
+            }
             win.panel.backgroundColor = NSColor(calibratedWhite: 0.55, alpha: 1)
             try? await Task.sleep(for: .milliseconds(700))
-            print("capture: msgs=\(state.messages.count) composerOpen=\(state.composerOpen)")
+            print("capture: msgs=\(state.messages.count) expanded=\(state.expanded) composerOpen=\(state.composerOpen) showsCloud=\(state.showsCloud)")
             for (name, appearance) in [("light", NSAppearance.Name.aqua),
                                        ("dark", NSAppearance.Name.darkAqua)] {
                 win.panel.appearance = NSAppearance(named: appearance)
@@ -531,6 +569,10 @@ struct Assembly: View {
         print("primary screen is screens[0]: \(screen == NSScreen.screens.first)")
         // CLAUDE.md open item: does cursor polling need Accessibility?
         print("AXIsProcessTrusted: \(AXIsProcessTrusted())")
+        state.dragging = true
+        tickForDiagnostics()
+        print("during drag -> solid=\(state.solid) ignoresMouseEvents=\(p.ignoresMouseEvents)")
+        state.dragging = false
         print("mouseLocation: \(NSEvent.mouseLocation)")
         print("modifierFlags readable: \(NSEvent.modifierFlags.rawValue)")
         // Clamping must survive an absurd request.
@@ -571,9 +613,15 @@ struct Assembly: View {
 
     private var expiryCounter = 0
 
+    func tickForDiagnostics() { tick() }
+
     private func tick() {
         // Dwell-to-solidify: poll the cursor rather than rely on hover, which a
         // click-through window never receives.
+        if state.dragging {                 // never interrupt a drag
+            win.panel.ignoresMouseEvents = false
+            return
+        }
         let inside = win.hit(NSEvent.mouseLocation)
         if inside {
             if dwellSince == nil { dwellSince = Date() }
@@ -593,10 +641,11 @@ struct Assembly: View {
         }
     }
 
+    /// Clicking away collapses the whole assembly back to just the pet.
+    /// Messages stay alive underneath and reappear when it is opened again.
     private func closeComposer() {
-        guard state.composerOpen else { return }
-        state.composerOpen = false
-        state.draft = ""
+        guard state.composerOpen || state.expanded else { return }
+        withAnimation(.easeOut(duration: 0.14)) { state.collapse() }
     }
 
     private func buildStatusItem() {

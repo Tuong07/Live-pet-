@@ -171,6 +171,14 @@ The pet is one object with one position. Both apps render the same thing.
 relative spot on a 13" laptop and a 27" display. Clamp on render so the whole
 assembly — cloud, pet, composer, action row — stays on screen.
 
+**Dragging is pinned to the cursor.** The pet's centre tracks the absolute
+cursor position with the grab offset held constant. Do not drive this from a
+gesture's `translation`: that is measured in the window's own coordinate space,
+so moving the window shifts the baseline the next translation is measured
+against, and the pet chases the cursor and overshoots. Equally, click-through
+must be forced off for the duration of a drag — a fast drag outruns the window,
+the cursor leaves the pet, and the window stops receiving the events moving it.
+
 **Movement syncs on drop, not during the drag.** One `move` frame when you let
 go. The peer's pet then animates smoothly from its old spot to the new one, so
 it reads as "someone moved it" rather than teleporting.
@@ -294,15 +302,20 @@ Click the cat. The input bubble and the action row appear **together** beneath
 it, and the input takes the keyboard without activating the app.
 
 - Enter sends. **The composer stays open** for rapid back-and-forth.
-- Esc closes the composer and the action row.
-- Clicking away closes them too.
+- The cloud and the composer appear in the **same step** — never one before the
+  other, and never an empty cloud waiting to be filled.
+- Esc collapses the whole assembly back to just the pet.
+- **Clicking outside collapses it too** — cloud, composer and action row all go.
+  Messages stay alive underneath for the rest of their thirty minutes and
+  reappear when the pet is opened again. Collapsing hides; it does not expire.
 
 ### The thinking cloud
 
 Sits above the cat with trailing dots leading up to it. It holds **both sides**
 of the conversation, so it reads as an exchange rather than an inbox.
 
-- Hidden entirely when no messages are live.
+- Hidden entirely when no messages are live, and whenever the pet is collapsed.
+- An arriving message expands it on its own — that is what makes it noticeable.
 - Grows with the conversation up to a cap (~1/3 of screen height). Past that,
   newest sit at the bottom and older ones scroll out of view.
 - Scrolled-away messages are still alive until their 30 minutes expire.
