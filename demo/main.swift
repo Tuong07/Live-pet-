@@ -36,10 +36,13 @@ enum L {
     static let focusDwell: TimeInterval = 0.6 // and only then take the keyboard
     static let linger: TimeInterval = 0.5     // countdown after the cursor leaves
     static let line: CGFloat = 18             // one line of text
-    /// A third of the screen, less two lines so the top does not sit flat
-    /// against the panel edge.
+    static let bubbleRow: CGFloat = 33        // one short message plus spacing
+    static let maxBubbles = 5                 // the cloud stops growing here
+    /// Five bubbles tall — plus one line of slack, so five still fit when one
+    /// of them wraps — and never more than a third of the screen.
     static func cloudCap(_ screen: NSScreen) -> CGFloat {
-        min(260, screen.frame.height / 3) - 2 * line
+        min(CGFloat(maxBubbles) * bubbleRow + 24 + line,
+            screen.frame.height / 3 - 2 * line)
     }
     /// Space the composer and action row need beneath the pet.
     static let stackBelow: CGFloat = pet / 2 + gap + bottom
@@ -296,61 +299,98 @@ struct Bubble: View {
     }
 }
 
+private struct CloudHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 struct Cloud: View {
     let messages: [Msg]
     let cap: CGFloat
     let life: (Msg) -> Double
+    @State private var content: CGFloat = 0
 
-    private var stack: some View {
+    /// Inset between the scrolling area and the rounded container. It lives
+    /// *outside* the ScrollView so it cannot scroll away — padding placed on the
+    /// content itself disappears once you scroll, letting the top bubble run
+    /// flush to the edge and square off the corner.
+    ///
+    /// No fade at the top edge: overflow simply clips at the rounded inner
+    /// shape, the way any chat window behaves. The container reads identically
+    /// rounded from the first message through to the cap.
+    private static let inset: CGFloat = 12
+    private static let radius: CGFloat = 18
+    /// The tail dots and their spacing sit below the box and come out of the
+    /// same budget. Forgetting them made the assembly taller than its region,
+    /// so the box overflowed above the panel and its rounded top was sliced off
+    /// flat by the window edge.
+    private static let tail: CGFloat = 7
+    private static let tailGap: CGFloat = 4
+
+    private var rows: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ForEach(messages) { Bubble(msg: $0, life: life($0)).id($0.id) }
+            ForEach(messages) {
+                Bubble(msg: $0, life: life($0)).id($0.id)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
-        // Equal top and bottom, so the two edges read the same.
-        .padding(.vertical, 12)
-        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A hidden copy at its natural height, purely to measure.
+    /// `ViewThatFits` cannot do this job: inside a VStack that also holds a
+    /// Spacer it is handed a proposal well short of the cap, so it fell through
+    /// to scrolling while the content still had room to grow. Measuring inside
+    /// the ScrollView is equally useless — the scroller constrains the very
+    /// height it reports back.
+    private var ruler: some View {
+        rows
+            .fixedSize(horizontal: false, vertical: true)
+            .background(GeometryReader { g in
+                Color.clear.preference(key: CloudHeight.self, value: g.size.height)
+            })
+            .hidden()
+            .frame(height: cap, alignment: .top)
+            .clipped()
+    }
+
+    private var scrollHeight: CGFloat {
+        let budget = cap - 2 * Self.inset - Self.tail - Self.tailGap
+        return min(max(content, 22), budget)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
             if !messages.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    // Hug the content until it reaches the cap, then scroll.
-                    // The cap belongs on the scrolling branch: `.frame(maxHeight:)`
-                    // *grows* to whatever the parent offers, which pinned the
-                    // cloud open at full height.
-                    ViewThatFits(in: .vertical) {
-                        stack
-                        ScrollViewReader { proxy in
-                            ScrollView(.vertical) { stack }
-                                .scrollIndicators(.never)
-                                .defaultScrollAnchor(.bottom)
-                                .onChange(of: messages.count) {
-                                    if let last = messages.last {
-                                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                                    }
+                VStack(alignment: .leading, spacing: Self.tailGap) {
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical) { rows }
+                            .scrollIndicators(.never)
+                            .defaultScrollAnchor(.bottom)
+                            .onChange(of: messages.count) {
+                                if let last = messages.last {
+                                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                                 }
-                                // Scrolled-away messages fade out instead of
-                                // ending in a hard flat slice.
-                                .mask(LinearGradient(
-                                    stops: [.init(color: .clear, location: 0),
-                                            .init(color: .black.opacity(0.55), location: 0.10),
-                                            .init(color: .black, location: 0.22),
-                                            .init(color: .black, location: 1)],
-                                    startPoint: .top, endPoint: .bottom))
-                        }
-                        .frame(height: cap)
+                            }
                     }
+                    // Grows a bubble at a time, then stops at the cap.
+                    .frame(height: scrollHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: Self.radius - Self.inset,
+                                                style: .continuous))
+                    .padding(.vertical, Self.inset)
+                    .padding(.horizontal, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                             .fill(.regularMaterial))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.10)))
 
                     HStack(spacing: 3) {
-                        Circle().frame(width: 7, height: 7)
+                        Circle().frame(width: Self.tail, height: Self.tail)
                         Circle().frame(width: 4, height: 4)
                     }
                     .foregroundStyle(.regularMaterial)
@@ -359,6 +399,9 @@ struct Cloud: View {
             }
         }
         .frame(height: cap, alignment: .bottom)
+        .background(ruler)
+        .onPreferenceChange(CloudHeight.self) { content = $0 }
+        .animation(.spring(response: 0.34, dampingFraction: 0.82), value: content)
     }
 }
 
@@ -542,6 +585,7 @@ struct Assembly: View {
     var status: NSStatusItem!
     var dwellSince: Date?
     var leftSince: Date?
+    var snapshotting = false
     var timer: Timer?
     var escMonitor: Any?
 
@@ -589,6 +633,7 @@ struct Assembly: View {
     /// Renders the assembly to PNG from inside the app. This is the view's own
     /// bitmap, not a screen capture, so it needs no Screen Recording grant.
     private func startSnapshot(_ prefix: String) {
+        snapshotting = true
         let n = CommandLine.arguments.contains("--idle")
             ? 0 : (Int(Self.argValue("--msgs=") ?? "3") ?? 3)
         Task { @MainActor in
@@ -611,11 +656,12 @@ struct Assembly: View {
             }
             win.panel.backgroundColor = NSColor(calibratedWhite: 0.55, alpha: 1)
             try? await Task.sleep(for: .milliseconds(700))
-            print("capture: msgs=\(state.messages.count) petY=\(Int(win.petCenter.y)) frame=\(win.panel.frame) winH=\(win.height)")
+            print("capture: msgs=\(state.messages.count) expanded=\(state.expanded) pinned=\(state.pinned) draft=\"\(state.draft)\" cap=\(win.cloudCap)")
             for (name, appearance) in [("light", NSAppearance.Name.aqua),
                                        ("dark", NSAppearance.Name.darkAqua)] {
                 win.panel.appearance = NSAppearance(named: appearance)
-                try? await Task.sleep(for: .milliseconds(450))
+                try? await Task.sleep(for: .milliseconds(800))
+                print("  \(name): expanded=\(state.expanded) msgs=\(state.messages.count)")
                 capture(to: "\(prefix)-\(name).png")
             }
             print("snapshots written")
@@ -630,6 +676,12 @@ struct Assembly: View {
     /// and `TextField` as an unsupported-view placeholder.
     private func capture(to path: String) {
         guard let view = win.panel.contentView else { return }
+        // SwiftUI lays out asynchronously; without forcing a pass the bitmap can
+        // catch a frame before the state has been applied.
+        view.needsLayout = true
+        view.layoutSubtreeIfNeeded()
+        view.needsDisplay = true
+        view.displayIfNeeded()
         let r = view.bounds
         guard let rep = view.bitmapImageRepForCachingDisplay(in: r) else { return }
         view.cacheDisplay(in: r, to: rep)
@@ -710,6 +762,9 @@ struct Assembly: View {
     func tickForDiagnostics() { tick() }
 
     private func tick() {
+        // Snapshots stage state directly; the live hover/linger machinery would
+        // race them and occasionally capture a collapsed frame.
+        if snapshotting { return }
         if state.dragging {                 // never interrupt a drag
             win.panel.ignoresMouseEvents = false
             return

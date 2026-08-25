@@ -327,12 +327,18 @@ of the conversation, so it reads as an exchange rather than an inbox.
 
 - Hidden entirely when no messages are live, and whenever the pet is collapsed.
 - An arriving message expands it on its own — that is what makes it noticeable.
-- Grows with the conversation up to a cap (~1/3 of screen height, less two lines
-  of text). Past that, newest sit at the bottom and older ones scroll out of
-  view.
-- **Top and bottom must read the same.** Equal inner padding, equal corner
-  radius, and a soft fade at the top edge so scrolled-away messages do not end
-  in a hard flat slice.
+- Grows a bubble at a time and **caps at five messages** (never more than a
+  third of the screen). Past that, newest sit at the bottom and older ones
+  scroll out of view.
+- **Top and bottom must read the same** — equal inset, equal corner radius, and
+  no fade. Overflow simply clips at the rounded edge, the way any chat window
+  behaves.
+- The inset between the scrolling area and the rounded container lives
+  **outside** the ScrollView. Padding on the content itself scrolls away, letting
+  the top message run flush to the edge and square off the corner.
+- The tail dots come out of the **same height budget** as the box. Leaving them
+  out made the assembly taller than its region; bottom-aligned, the box's
+  rounded top was pushed above the panel edge and clipped into a flat line.
 - **Bubbles dim as they age**, fading gradually across their thirty minutes so
   expiry reads as deliberate rather than as messages randomly vanishing.
 - Scrolled-away messages are still alive until their 30 minutes expire.
