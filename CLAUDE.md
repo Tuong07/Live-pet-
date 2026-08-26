@@ -14,9 +14,10 @@ people at once. Drag it to the left and it moves left on her screen too, as if
 an invisible hand picked it up. Which is what happened: your hand. Every design
 question resolves toward preserving that illusion.
 
-**Status:** phase 1 proven by the demo in `demo/` — see **Demo status**.
-**Phase 2 is specified and unblocked; nothing is built yet.** No production code
-exists; the demo is disposable and is not the app.
+**Status:** phase 1 proven by the demo in `demo/`. **Phase 2 is built and
+verified** — relay, crypto, pairing, presence and mirroring all work between two
+instances on one Mac. Run `./verify.sh` to check every claim in this file.
+Phase 3 is next.
 
 **Do not write code until the user explicitly says to start.** Discussing scope,
 agreeing an approach, or being asked "any more questions?" is **not**
@@ -676,8 +677,8 @@ Tests/                   Swift Testing — crypto, expiry, state machine
 Verified on this machine: Swift 6.3.3, macOS 26.5.2, Xcode command line tools
 present at `/Applications/Xcode.app`.
 
-- `xcodegen generate` after touching `project.yml` or adding files.
-- `xcodebuild -scheme LivePet build` to build from the CLI.
+- `./build.sh` builds `LivePet.app` (swiftc; see the phase 2 deviations note).
+- `./verify.sh` runs the whole phase 2 check suite.
 - `cd relay && npm run dev` for the relay locally; the app takes a relay URL
   override so it can be pointed at localhost during development.
 - Test the things that are hard to eyeball: key derivation, message expiry, the
@@ -759,9 +760,9 @@ Each phase produces something runnable, so the user can feel it and redirect.
    Draggable pinned to the cursor, remembers position, survives restarts. Menu
    bar item with Quit. Profile namespacing and the dev offset. No networking.
    Still demo code — phase 2 is where the real target begins.
-2. **Two cats, one wire** — ⬅ **next.** Relay, pairing keys, encryption,
-   presence. Text lands on the other machine. Ugly but real.
-3. **The conversation** — the thinking cloud with its growth cap and scrolling,
+2. **Two cats, one wire** — ✅ **built.** Relay, pairing keys, encryption,
+   presence, mirroring. Text, actions and movement land on the other machine.
+3. **The conversation** — ⬅ **next.** The thinking cloud with its growth cap and scrolling,
    the composer, 30-minute rolling window, unread handling, hotkey, away state.
 4. **Affection** — the action row (pet, sleep, move), emoji, sound, reaction
    animations. Poke/feed/kiss slot in here if wanted.
@@ -799,6 +800,32 @@ each step is testable before the next exists.
 
 Verified throughout as two instances on one Mac against the local relay, using
 the existing `--profile` namespacing and dev offset.
+
+### Phase 2 status — built
+
+`./build.sh` produces `LivePet.app`; `./verify.sh` runs every check below.
+
+| Step | State | Verified by |
+|---|---|---|
+| Relay | done | 16 checks: presence, verbatim forwarding, `room_full`, rate limiting, malformed `hello`, no room id in logs |
+| Crypto | done | Swift opens ciphertext sealed by Node — the two implementations agree on the wire format |
+| Scripted peer | done | `node relay/dist/peer.js <KEY> [listen\|text\|flood N\|move x y\|greet]` |
+| Connection | done | four states, refusal to send while `waiting`, reconnect after the relay dies and returns |
+| Pairing UI | done | first-run screen renders; key and nickname to the Keychain |
+| Mirroring | done | text, actions and `move` cross between two instances; `state` reconciliation picks the newer `pos_ts` |
+
+Dev-only launch arguments: `--pair=<KEY>` and `--name=` skip the first-run
+screen, `--drive=` scripts a sequence, `--trace=` logs what each instance saw,
+`--snapshot=` renders the UI to PNG.
+
+**Two tooling deviations from this document, both deliberate:**
+
+- **No XcodeGen.** It is not installed and the app has zero third-party
+  dependencies, so `build.sh` compiles with `swiftc` directly. Revisit when
+  signing needs a real Xcode project (phase 6).
+- **No Swift Testing.** Without a SwiftPM package the tests are standalone
+  executables under `Tests/`, run by `verify.sh`. Same coverage, no package
+  manifest.
 
 Post-MVP: the cat comes alive — wandering, napping, reacting to your typing,
 appearing in the corner when you've been heads-down too long.

@@ -1,0 +1,6 @@
+# Built products — rebuildable in seconds from build.sh
+LivePet.app/
+demo/LivePetDemo.app/
+relay/dist/
+relay/node_modules/
+*.trace
