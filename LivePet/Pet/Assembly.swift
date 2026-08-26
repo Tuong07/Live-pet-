@@ -30,6 +30,10 @@ struct Cloud: View {
     let cap: CGFloat
     let life: (Msg) -> Double
     @State private var content: CGFloat = 0
+    @State private var bottomEdge: CGFloat = 0
+
+    /// Within a few points of the bottom counts as "following the conversation".
+    private var isAtBottom: Bool { bottomEdge - scrollHeight < 12 }
 
     /// The inset lives *outside* the ScrollView so it cannot scroll away.
     /// Padding on the content itself disappears once you scroll, letting the top
@@ -70,6 +74,11 @@ struct Cloud: View {
             .clipped()
     }
 
+    private func reportBottom(_ v: CGFloat) {
+        guard abs(v - bottomEdge) > 0.5 else { return }
+        DispatchQueue.main.async { bottomEdge = v }
+    }
+
     private func report(_ h: CGFloat) {
         guard abs(h - content) > 0.5 else { return }
         DispatchQueue.main.async { content = h }   // never mutate during layout
@@ -90,14 +99,26 @@ struct Cloud: View {
                 if !messages.isEmpty {
                     VStack(alignment: .leading, spacing: Self.tailGap) {
                         ScrollViewReader { proxy in
-                            ScrollView(.vertical) { rows }
-                                .scrollIndicators(.never)
-                                .defaultScrollAnchor(.bottom)
-                                .onChange(of: messages.count) {
-                                    if let last = messages.last {
-                                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                                    }
-                                }
+                            ScrollView(.vertical) {
+                                rows.background(GeometryReader { g in
+                                    Color.clear
+                                        .onAppear { reportBottom(g.frame(in: .named("cloud")).maxY) }
+                                        .onChange(of: g.frame(in: .named("cloud")).maxY) { _, v in
+                                            reportBottom(v)
+                                        }
+                                })
+                            }
+                            .coordinateSpace(name: "cloud")
+                            .scrollIndicators(.never)
+                            .defaultScrollAnchor(.bottom)
+                            .onChange(of: messages.count) {
+                                // If you have scrolled up to reread something, a
+                                // new message must not yank you back down. The
+                                // pet still animates, so you know it arrived.
+                                Trace.write("autoscroll atBottom=\(isAtBottom) edge=\(Int(bottomEdge)) viewport=\(Int(scrollHeight))")
+                                guard isAtBottom, let last = messages.last else { return }
+                                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                            }
                         }
                         .frame(height: scrollHeight)
                         .clipShape(RoundedRectangle(cornerRadius: Self.radius - Self.inset,
@@ -207,8 +228,8 @@ struct Assembly: View {
                 unread: session.unread, dragging: session.dragging)
                 .gesture(drag)
                 .onTapGesture {
-                    session.pinned = true          // clicking pins it open
-                    session.open(focusKeyboard: true)
+                    // Clicking pins it open — but only if it opened at all.
+                    if session.open(focusKeyboard: true) { session.pinned = true }
                 }
 
             VStack(spacing: 8) {

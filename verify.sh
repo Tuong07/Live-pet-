@@ -78,10 +78,53 @@ sleep 10
 [ "$(grep -c 'state waiting' /tmp/lp-rn.trace)" -ge 2 ]; ok $? "reconnects once the relay returns"
 pkill -f "LivePet.app/Contents" 2>/dev/null
 
+say "read-time expiry clock"
+pkill -f "LivePet.app/Contents" 2>/dev/null; sleep 0.4
+rm -f /tmp/lp-read.trace
+./LivePet.app/Contents/MacOS/LivePet --profile=rd --pair="$KEY" --trace=/tmp/lp-read.trace \
+  --relay=ws://localhost:8080 --expiry=5 \
+  --drive="wait:2,msgs,wait:8,msgs,open,wait:1,msgs,wait:7,msgs,quit" >/dev/null 2>&1 &
+sleep 3
+node relay/dist/peer.js "$KEY" text "does this survive" >/dev/null 2>&1 &
+sleep 16
+pkill -f "dist/peer.js" 2>/dev/null
+# ttl is 5s, yet the message must still be there 8s later because nobody read it.
+sed -n '2p' <(grep "^msgs " /tmp/lp-read.trace) | grep -q "total=1 parked=1"
+ok $? "an unread message parks past its ttl instead of expiring"
+sed -n '3p' <(grep "^msgs " /tmp/lp-read.trace) | grep -q "total=1 parked=0"
+ok $? "opening the cloud starts its clock"
+sed -n '4p' <(grep "^msgs " /tmp/lp-read.trace) | grep -q "total=0"
+ok $? "it expires a full ttl after being read, not after arriving"
+
+say "away: the pet stirs, nothing opens"
+pkill -f "LivePet.app/Contents" 2>/dev/null; sleep 0.4
+rm -f /tmp/lp-away.trace
+./LivePet.app/Contents/MacOS/LivePet --profile=aw --pair="$KEY" --trace=/tmp/lp-away.trace \
+  --relay=ws://localhost:8080 --drive="wait:2,open,wait:1,ui,quit" >/dev/null 2>&1 &
+sleep 5
+grep -q "drive open opened=false" /tmp/lp-away.trace; ok $? "opening is refused while the peer is away"
+grep -q "^stir" /tmp/lp-away.trace; ok $? "the pet stirs instead"
+grep -q "ui expanded=false" /tmp/lp-away.trace; ok $? "nothing opens"
+
+say "peer leaves mid-conversation"
+pkill -f "LivePet.app/Contents" 2>/dev/null; sleep 0.4
+rm -f /tmp/lp-mid.trace
+node relay/dist/peer.js "$KEY" listen >/dev/null 2>&1 &
+sleep 1
+./LivePet.app/Contents/MacOS/LivePet --profile=md --pair="$KEY" --trace=/tmp/lp-mid.trace \
+  --relay=ws://localhost:8080 --drive="wait:2,pin,ui,wait:6,ui,quit" >/dev/null 2>&1 &
+sleep 4
+pkill -f "dist/peer.js" 2>/dev/null
+sleep 6
+grep "^ui " /tmp/lp-mid.trace | tail -1 | grep -q "expanded=true"
+ok $? "a pinned assembly stays open when the peer leaves"
+grep "^ui " /tmp/lp-mid.trace | tail -1 | grep -q "canSend=false"
+ok $? "but the composer is disabled"
+
 pkill -f "LivePet.app/Contents" 2>/dev/null; pkill -f "dist/relay.js" 2>/dev/null
 say "relay log must contain no room ids"
 grep -qE "[0-9a-f]{64}" /tmp/lp-relay.log; [ $? -ne 0 ]; ok $? "no room id leaked into logs"
 
 echo
-[ "$FAIL" = 0 ] && echo "phase 2 verified" || echo "SOME CHECKS FAILED"
+[ "$FAIL" = 0 ] && echo "phases 2 and 3 verified" || echo "SOME CHECKS FAILED"
 exit $FAIL

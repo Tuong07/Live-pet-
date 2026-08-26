@@ -9,15 +9,35 @@ struct Msg: Identifiable, Equatable {
     let mine: Bool
     let born: Date
 
-    init(id: String = UUID().uuidString, text: String, mine: Bool, born: Date = Date()) {
+    /// When this message was first seen. **The clock runs from here, not from
+    /// `born`** — you get a full half hour with everything, rather than losing
+    /// time to being away from the desk.
+    ///
+    /// nil means parked: it has arrived but has not been read, so no clock is
+    /// running at all. Your own messages are read the moment you send them.
+    var firstSeen: Date?
+
+    init(id: String = UUID().uuidString, text: String, mine: Bool,
+         born: Date = Date(), firstSeen: Date? = nil) {
         self.id = id; self.text = text; self.mine = mine; self.born = born
+        self.firstSeen = mine ? (firstSeen ?? born) : firstSeen
     }
 
+    var isParked: Bool { firstSeen == nil }
+
     /// 1 when fresh, 0 at expiry. Bubbles dim as they age so expiry reads as
-    /// deliberate rather than as messages randomly vanishing.
+    /// deliberate rather than as messages randomly vanishing. A parked message
+    /// shows at full strength — its half hour has not started.
     func life(now: Date, ttl: TimeInterval) -> Double {
-        guard ttl > 0 else { return 0 }
-        return max(0, min(1, 1 - now.timeIntervalSince(born) / ttl))
+        guard let seen = firstSeen, ttl > 0 else { return 1 }
+        return max(0, min(1, 1 - now.timeIntervalSince(seen) / ttl))
+    }
+
+    /// Parked messages never expire. Nothing is on disk, so the real ceiling is
+    /// the life of the app process.
+    func hasExpired(now: Date, ttl: TimeInterval) -> Bool {
+        guard let seen = firstSeen else { return false }
+        return now.timeIntervalSince(seen) >= ttl
     }
 }
 

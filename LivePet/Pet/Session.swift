@@ -74,7 +74,9 @@ final class Session: ObservableObject, RelayClientDelegate {
         } else if state == .waiting {
             mood = .dozing
         }
-        if state != .live { composerOpen = composerOpen && pinned }
+        // If they go away mid-conversation the assembly stays as it is — the
+        // composer simply renders disabled. Yanking it shut under the cursor
+        // would be worse than letting it sit there saying why it cannot send.
     }
 
     func relay(_ client: RelayClient, didReceive frame: InnerFrame) {
@@ -153,13 +155,40 @@ final class Session: ObservableObject, RelayClientDelegate {
 
     // MARK: - UI state
 
-    func open(focusKeyboard: Bool) {
+    /// Opening is refused while the peer is away: the pet stirs and dozes off
+    /// again instead. Returns false when it declined.
+    @discardableResult
+    func open(focusKeyboard: Bool) -> Bool {
+        guard connection == .live else { stir(); return false }
+        markVisibleAsRead()
         unread = false
         withAnimation(.easeOut(duration: 0.16)) {
             expanded = true
             composerOpen = true
         }
         if focusKeyboard { window?.panel.makeKey() }
+        return true
+    }
+
+    /// The pet wakes for a moment, then falls back to dozing — it acknowledges
+    /// you without pretending it can carry a message.
+    func stir() {
+        guard connection != .live else { return }
+        Trace.write("stir")
+        mood = .idle
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(900))
+            if connection != .live { mood = .dozing }
+        }
+    }
+
+    /// The clock starts when the cloud opens with the message in it. A message
+    /// scrolled out of view above the fold still counts — it was on screen.
+    private func markVisibleAsRead() {
+        let stamp = Date()
+        for i in messages.indices where messages[i].firstSeen == nil {
+            messages[i].firstSeen = stamp
+        }
     }
 
     func collapse() {
@@ -179,18 +208,22 @@ final class Session: ObservableObject, RelayClientDelegate {
         }
     }
 
-    /// The cloud caps at five bubbles; older ones scroll out of view but stay
-    /// alive until their thirty minutes are up.
+    /// A safety valve, not a product rule. Expiry is what ends a message —
+    /// scrolled-away messages stay alive until their half hour is up, and a
+    /// parked one never expires at all, so the list needs *some* ceiling.
+    /// It should never be reached in normal use.
+    private static let memoryCeiling = 200
+
     private func trim() {
-        let keep = L.maxBubbles * 4
-        if messages.count > keep { messages.removeFirst(messages.count - keep) }
+        if messages.count > Self.memoryCeiling {
+            messages.removeFirst(messages.count - Self.memoryCeiling)
+        }
     }
 
     func expire() {
         now = Date()
-        let cutoff = now.addingTimeInterval(-ttl)
         let before = messages.count
-        messages.removeAll { $0.born < cutoff }
+        messages.removeAll { $0.hasExpired(now: now, ttl: ttl) }
         if messages.isEmpty && before > 0 { unread = false }
     }
 }

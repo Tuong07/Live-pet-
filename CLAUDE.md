@@ -14,10 +14,10 @@ people at once. Drag it to the left and it moves left on her screen too, as if
 an invisible hand picked it up. Which is what happened: your hand. Every design
 question resolves toward preserving that illusion.
 
-**Status:** phase 1 proven by the demo in `demo/`. **Phase 2 is built and
-verified** — relay, crypto, pairing, presence and mirroring all work between two
-instances on one Mac. Run `./verify.sh` to check every claim in this file.
-Phase 3 is next.
+**Status:** phase 1 proven by the demo in `demo/`. **Phases 2 and 3 are built
+and verified** — relay, crypto, pairing, presence, mirroring, the rolling
+message window and the away behaviour all work between two instances on one Mac.
+Run `./verify.sh` to check every claim in this file. Phase 4 is next.
 
 **Do not write code until the user explicitly says to start.** Discussing scope,
 agreeing an approach, or being asked "any more questions?" is **not**
@@ -230,8 +230,12 @@ exponential backoff capped at ~30s. Heartbeat `ping` every 20s; two missed
 There is no status text to read.
 
 - **Awake, blinking** — peer connected (`live`). Send freely.
-- **Dozing** — peer away (`waiting`). Input disabled with a plain line:
-  *"Sam is away."* You cannot type into the void.
+- **Dozing** — peer away (`waiting`). Hovering or clicking makes the pet **stir
+  awake for a moment and then doze off again**, and nothing opens: no cloud, no
+  composer. The pet acknowledges you without pretending it can carry a message.
+- If the peer leaves while the assembly is already **pinned open**, it stays
+  open and the composer simply renders disabled — *"Sam is away."* Yanking it
+  shut under the cursor would be worse.
 
 The pet is never absent, dead, or hidden. Away is a mood, not a disappearance —
 it must not break the illusion that the creature is continuously alive.
@@ -257,6 +261,16 @@ minutes later it fades and is destroyed.
 The window exists only in memory. Quit the app, close the lid, or lose power and
 it empties immediately — there is nothing to recover because nothing was written
 down. Scroll to the edge of the last half hour and there is no "older".
+
+**The clock starts when you read it, not when it arrives.** A message that has
+arrived but not been seen is *parked*: no timer runs, it shows at full strength,
+and it cannot expire. Opening the cloud stamps every message in it as seen and
+starts all their clocks at once. You always get a full half hour with everything.
+
+Two consequences, both deliberate. A message you never open never expires — but
+nothing is on disk, so the real ceiling is the life of the app process. And
+because the pet refuses to open while your partner is away, messages that
+arrived while they were gone stay parked until they are back.
 
 **Unread handling:** an arriving message does **not** pop the cloud open by
 itself — that would be unwelcome mid-meeting or mid-screenshare. It shows a
@@ -352,7 +366,12 @@ of the conversation, so it reads as an exchange rather than an inbox.
   out made the assembly taller than its region; bottom-aligned, the box's
   rounded top was pushed above the panel edge and clipped into a flat line.
 - **Bubbles dim as they age**, fading gradually across their thirty minutes so
-  expiry reads as deliberate rather than as messages randomly vanishing.
+  expiry reads as deliberate rather than as messages randomly vanishing. A
+  parked message shows at full strength — its clock has not started.
+- **Scrolling up is respected.** If you have scrolled back to reread something,
+  an arriving message does not yank you to the bottom; the pet animates instead.
+- **No message length cap.** One long message can therefore fill most of the
+  cloud on its own. Decided knowingly.
 - Scrolled-away messages are still alive until their 30 minutes expire.
 - Individual bubbles wrap to fit their text.
 
@@ -395,7 +414,6 @@ user, not to make while implementing.
 | UI | SwiftUI + AppKit | SwiftUI for bubbles and input; AppKit where SwiftUI can't reach. |
 | Window | Borderless `NSPanel` subclass | See below — this is what decides the stack. |
 | Sprites | `TimelineView` + `Canvas` | Draws preloaded frames on a clock. Precise timing, low CPU. |
-| Hotkey | Carbon `RegisterEventHotKey` | Global hotkey with **no** Accessibility permission. |
 | Crypto | CryptoKit | Built in, audited, Apple-silicon accelerated. |
 | Networking | `URLSessionWebSocketTask` | Built in; reconnect with exponential backoff. |
 | Sound | `AVAudioPlayer` | Built in. |
@@ -409,11 +427,15 @@ That combination is what lets it float over fullscreen apps and follow across
 Spaces. Electron cannot do this well and would ship ~150MB plus a Chromium
 process to display a cat; native is ~5MB.
 
-**On the hotkey:** the modern API (`NSEvent.addGlobalMonitorForEvents`) requires
-Accessibility permission — a system prompt granting the app the right to observe
-every keystroke. For an app whose pitch is "we store nothing", asking for that on
-first launch is self-defeating. Carbon's `RegisterEventHotKey` is legacy C but
-needs no permission at all. This is deliberate; don't "modernise" it.
+**There is no global hotkey — cut in phase 3, on request.** Hover opens the
+assembly, which is what the hotkey existed to shortcut, so it earned its removal
+rather than being forgotten. Do not add one back unprompted.
+
+If it is ever wanted, the reasoning that was already settled: use Carbon's
+`RegisterEventHotKey`, not `NSEvent.addGlobalMonitorForEvents`. The modern API
+requires Accessibility permission — a system prompt granting the app the right
+to observe every keystroke — which is self-defeating for an app whose pitch is
+"we store nothing". Carbon is legacy C and needs no permission at all.
 
 ### Relay
 
@@ -663,7 +685,7 @@ project.yml              XcodeGen manifest — the source of truth for the targe
 LivePet/
   App/                   entry point, app delegate, first-run pairing flow
   Pet/                   NSPanel, sprite engine, animation state machine
-  Chat/                  bubbles, 30-minute window, reply input, hotkey
+  Chat/                  bubbles, the rolling window, reply input
   Net/                   WebSocket client, reconnect, presence
   Crypto/                key derivation, seal/open
   Store/                 Keychain and UserDefaults wrappers
@@ -762,9 +784,10 @@ Each phase produces something runnable, so the user can feel it and redirect.
    Still demo code — phase 2 is where the real target begins.
 2. **Two cats, one wire** — ✅ **built.** Relay, pairing keys, encryption,
    presence, mirroring. Text, actions and movement land on the other machine.
-3. **The conversation** — ⬅ **next.** The thinking cloud with its growth cap and scrolling,
-   the composer, 30-minute rolling window, unread handling, hotkey, away state.
-4. **Affection** — the action row (pet, sleep, move), emoji, sound, reaction
+3. **The conversation** — ✅ **built.** The thinking cloud with its growth cap
+   and scrolling, the composer, the rolling window on a **read-time** clock,
+   unread handling, away state. **No hotkey** — cut on request; see below.
+4. **Affection** — ⬅ **next.** The action row (pet, sleep, move), emoji, sound, reaction
    animations. Poke/feed/kiss slot in here if wanted.
 5. **Your cat** — swap in real art, tune animation timing, polish first-run
    pairing flow.
@@ -824,6 +847,32 @@ Dev-only launch arguments: `--pair=<KEY>` and `--name=` skip the first-run
 screen, `--drive=` scripts a sequence, `--trace=` logs what each instance saw,
 `--snapshot=` renders the UI to PNG.
 
+### Phase 3 status — built
+
+Most of phase 3's UI arrived with the phase 2 port. What phase 3 actually
+changed:
+
+| Change | State | Verified by |
+|---|---|---|
+| Read-time expiry clock | done | an unread message parks past its ttl; opening starts its clock; it dies a full ttl after being read |
+| Away means the pet only stirs | done | opening is refused, `stir` is traced, nothing expands |
+| Pinned assembly survives the peer leaving | done | stays `expanded=true` with `canSend=false` |
+| Scroll position respected | done* | see the caveat below |
+| `trim()` no longer eats live messages | done | expiry is the only thing that ends a message |
+| Hotkey removed | done | struck from the stack, the layout and the repo map |
+
+**\* The one thing not verified end to end.** The guard that stops an arriving
+message yanking you to the bottom is wired and its measurements are correct
+(content height and viewport are reported live, and read `edge=172 viewport=172`
+when at the bottom). But a synthesised scroll wheel event never reaches a
+non-activating panel from another process, so the *scrolled-up* branch could not
+be exercised automatically. It needs a human with a trackpad. Do not claim it is
+proven.
+
+**A safety valve, not a product rule:** the message list is capped at 200. With
+a read-time clock a parked message never expires, so the list needs some
+ceiling. It should never be reached in normal use.
+
 **Two tooling deviations from this document, both deliberate:**
 
 - **No XcodeGen.** It is not installed and the app has zero third-party
@@ -867,26 +916,11 @@ never showing a keystroke-observation prompt holds.
   screen gets dragged back by AppKit with an *animated* `setFrame`, which never
   consults `constrainFrameRect`. The window itself has to stay on screen.
 
-### Needed for phase 3
-
-- **Expiry clock** — do the thirty minutes start when a message is *sent* or when
-  it's *read*? Send-time is more honest to "no history"; read-time guarantees a
-  full half hour with it.
-- **Hotkey** — which combination? `⌥Space` is comfortable but collides with
-  popular launchers.
-- **Message length cap** — a speech bubble stops being glanceable somewhere
-  around 140 characters.
-
 ### Needed later
 
 - **Typing indicator** [4] — should the cat show the peer is typing (ears
   twitching, looking up)? Small feature, disproportionate warmth — and the only
   thing here that leaks a little metadata to the relay.
 - **Sound toggle** [4] — one setting, or per-message-type?
-- **Cloud cap value** [3] — is a third of screen height right, or should the
-  cloud stay smaller and more glanceable?
-- **Composer while away** [3] — the composer is disabled when the peer is away.
-  Should clicking the cat still open it (showing "Sam is away"), or should the
-  cat simply not respond to clicks?
 - **Launch at login** [5] — an always-present pet you must remember to open is a
   pet that's usually asleep.

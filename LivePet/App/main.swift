@@ -156,6 +156,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let x = Double(parts[1]) ?? 0.5, y = Double(parts[2]) ?? 0.5
                     win.setRelative(x: x, y: y)
                     session.didDrop()
+                case "pin":
+                    // What clicking the pet does: open, and hold it open.
+                    if session.open(focusKeyboard: false) { session.pinned = true }
+                    Trace.write("drive pin pinned=\(session.pinned)")
+                case "ui":
+                    Trace.write("ui expanded=\(session.expanded) composer=\(session.composerOpen) canSend=\(session.canSend)")
+                case "msgs":
+                    let parked = session.messages.filter(\.isParked).count
+                    Trace.write("msgs total=\(session.messages.count) parked=\(parked)")
+                case "open":
+                    let opened = session.open(focusKeyboard: false)
+                    Trace.write("drive open opened=\(opened)")
                 case "pos":
                     let r = win.relative
                     Trace.write("pos \(r.x),\(r.y)")
@@ -171,6 +183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Hover, dwell, linger
 
+    /// Latches a refused open so leaving and returning is what re-stirs the pet.
+    private var stirredThisHover = false
+
     private func poll() {
         if session.dragging {
             win.panel.ignoresMouseEvents = false     // never interrupt a drag
@@ -185,8 +200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let held = Date().timeIntervalSince(dwellSince!)
             if held >= L.dwell {
                 session.hovering = true
-                // Hover opens it. No click required.
-                if !session.expanded { session.open(focusKeyboard: false) }
+                // Hover opens it. No click required. While the peer is away the
+                // pet only stirs, so this is latched — otherwise the poll would
+                // re-trigger the stir twenty times a second.
+                if !session.expanded && !stirredThisHover {
+                    if !session.open(focusKeyboard: false) { stirredThisHover = true }
+                }
             }
             // Keyboard focus is a later, deliberate step — a cursor drifting
             // over the pet mid-sentence must not swallow the rest of the line.
@@ -195,6 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else {
             dwellSince = nil
+            stirredThisHover = false
             session.hovering = false
             if session.expanded && !session.pinned {
                 if leftAt == nil { leftAt = Date() }

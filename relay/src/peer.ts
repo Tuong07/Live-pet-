@@ -104,7 +104,8 @@ if (require.main === module) {
   const [key, cmd = "listen", ...rest] = process.argv.slice(2);
   if (!key) { console.error('usage: peer <PAIRING-KEY> [listen|text "…"|flood N|move x y]'); process.exit(1); }
   const p = new Peer(key);
-  p.onPeer = (o) => console.log(`peer online: ${o}`);
+  let cmdAlreadyOnline = false;
+  p.onPeer = (o) => { cmdAlreadyOnline = cmdAlreadyOnline || o; console.log(`peer online: ${o}`); };
   p.onMessage = (m) => console.log("recv:", JSON.stringify(m));
   if (cmd === "greet") {
     // Wait until the other side is actually there, then speak. Delivery is
@@ -132,6 +133,21 @@ if (require.main === module) {
       const n = Number(rest[0] ?? 10);
       for (let i = 1; i <= n; i++) { p.text(`flood ${i}/${n}`); await new Promise(r => setTimeout(r, 120)); }
     } else if (cmd === "move") p.move(Number(rest[0]), Number(rest[1]));
+    else if (cmd === "scrolltest") {
+      // Wait for the app to be there and settle, fill the cloud, pause long
+      // enough to scroll, then send one more. A single connection does all of
+      // it, because a room holds exactly two.
+      await new Promise<void>((done) => {
+        const prev = p.onPeer;
+        p.onPeer = (online) => { prev(online); if (online) done(); };
+        if (cmdAlreadyOnline) done();
+      });
+      await new Promise(r => setTimeout(r, 4000));      // let the app pin open
+      for (let i = 1; i <= 12; i++) { p.text(`line ${i}`); await new Promise(r => setTimeout(r, 150)); }
+      await new Promise(r => setTimeout(r, 10_000));    // window to scroll up
+      p.text("should NOT yank you down");
+      setTimeout(() => process.exit(0), 800);
+    }
     else if (cmd === "state") {
       // state <x> <y> <pos_ts>  — pos_ts may be older or newer than the peer's.
       p.state(Number(rest[0]), Number(rest[1]), Number(rest[2]));
