@@ -809,10 +809,16 @@ the existing `--profile` namespacing and dev offset.
 |---|---|---|
 | Relay | done | 16 checks: presence, verbatim forwarding, `room_full`, rate limiting, malformed `hello`, no room id in logs |
 | Crypto | done | Swift opens ciphertext sealed by Node — the two implementations agree on the wire format |
-| Scripted peer | done | `node relay/dist/peer.js <KEY> [listen\|text\|flood N\|move x y\|greet]` |
-| Connection | done | four states, refusal to send while `waiting`, reconnect after the relay dies and returns |
+| Scripted peer | done | `node relay/dist/peer.js <KEY> [listen\|text\|flood N\|move x y\|state x y ts\|greet]` |
+| Connection | done | four states; sending refused while `waiting`; drops to `connecting` when the relay dies and returns to `waiting` when it comes back |
 | Pairing UI | done | first-run screen renders; key and nickname to the Keychain |
-| Mirroring | done | text, actions and `move` cross between two instances; `state` reconciliation picks the newer `pos_ts` |
+| Mirroring | done | text, actions and `move` cross between two instances; `state` reconciliation verified **both ways** — an older `pos_ts` is ignored, a newer one wins and the pet follows |
+
+Also checked against the spec's own numbers rather than assumed: ping every 20s,
+two missed pongs, backoff capped at 30s, 80-bit key, 96-bit nonce, room capacity
+of two, HKDF salt `live-pet/v1` with `room`/`msg` info strings, and exactly four
+connection states. The relay imports nothing but `ws` — no filesystem, no
+database — and never dereferences the ciphertext field.
 
 Dev-only launch arguments: `--pair=<KEY>` and `--name=` skip the first-run
 screen, `--drive=` scripts a sequence, `--trace=` logs what each instance saw,

@@ -132,5 +132,10 @@ if (require.main === module) {
       const n = Number(rest[0] ?? 10);
       for (let i = 1; i <= n; i++) { p.text(`flood ${i}/${n}`); await new Promise(r => setTimeout(r, 120)); }
     } else if (cmd === "move") p.move(Number(rest[0]), Number(rest[1]));
+    else if (cmd === "state") {
+      // state <x> <y> <pos_ts>  — pos_ts may be older or newer than the peer's.
+      p.state(Number(rest[0]), Number(rest[1]), Number(rest[2]));
+      setTimeout(() => process.exit(0), 600);
+    }
   }).catch((e) => { console.error("failed:", e.message); process.exit(1); });
 }

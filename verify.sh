@@ -48,6 +48,36 @@ sleep 6
 grep -q "drive text sent=false" /tmp/lp-z.trace; ok $? "third machine cannot send"
 grep -q "state live" /tmp/lp-z.trace; [ $? -ne 0 ]; ok $? "third machine never goes live"
 
+say "position reconciliation (newest pos_ts wins)"
+NOW=$(python3 -c "import time;print(int(time.time()*1000))")
+for CASE in older:1000 newer:$((NOW + 600000)); do
+  LABEL="${CASE%%:*}"; TS="${CASE##*:}"
+  pkill -f "LivePet.app/Contents" 2>/dev/null; sleep 0.4
+  ./LivePet.app/Contents/MacOS/LivePet --profile=rc --pair="$KEY" --trace=/tmp/lp-rc.trace \
+    --relay=ws://localhost:8080 --drive="wait:1,move:0.70:0.50,wait:1,pos,wait:6,pos,quit" >/dev/null 2>&1 &
+  sleep 3
+  node relay/dist/peer.js "$KEY" state 0.10 0.90 "$TS" >/dev/null 2>&1
+  sleep 5
+  FINAL=$(grep "^pos " /tmp/lp-rc.trace | tail -1)
+  if [ "$LABEL" = older ]; then
+    echo "$FINAL" | grep -q "0.7,0.5"; ok $? "an older pos_ts is ignored"
+  else
+    echo "$FINAL" | grep -q "0.1,0.9"; ok $? "a newer pos_ts wins and the pet follows"
+  fi
+done
+
+say "reconnect after the relay dies and returns"
+pkill -f "LivePet.app/Contents" 2>/dev/null; sleep 0.4
+./LivePet.app/Contents/MacOS/LivePet --profile=rn --pair="$KEY" --trace=/tmp/lp-rn.trace \
+  --relay=ws://localhost:8080 --drive="wait:30,quit" >/dev/null 2>&1 &
+sleep 3
+pkill -f "dist/relay.js"; sleep 4
+grep -q "state connecting" /tmp/lp-rn.trace; ok $? "drops to connecting when the relay dies"
+node relay/dist/relay.js > /tmp/lp-relay2.log 2>&1 &
+sleep 10
+[ "$(grep -c 'state waiting' /tmp/lp-rn.trace)" -ge 2 ]; ok $? "reconnects once the relay returns"
+pkill -f "LivePet.app/Contents" 2>/dev/null
+
 pkill -f "LivePet.app/Contents" 2>/dev/null; pkill -f "dist/relay.js" 2>/dev/null
 say "relay log must contain no room ids"
 grep -qE "[0-9a-f]{64}" /tmp/lp-relay.log; [ $? -ne 0 ]; ok $? "no room id leaked into logs"
